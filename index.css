@@ -1,0 +1,35 @@
+
+/* Basic Reset and Root Styles */
+:root {
+  --pink-primary: #ff2d75;
+  --bg-dark: #050505;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--bg-dark);
+  color: #fce7f3;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Recharts customization */
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  stroke: rgba(255, 45, 117, 0.1);
+}
+
+.recharts-text {
+  fill: rgba(255, 255, 255, 0.5) !important;
+  font-size: 10px;
+  font-family: 'Inter', sans-serif;
+}
