@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Поддержать проект</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+  <style>
+    * { font-family: 'Inter', sans-serif; }
+
+    body {
+      min-height: 100vh;
+      background: linear-gradient(135deg, #0f0f1a 0%, #1a1030 50%, #0f1a2a 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+
+    .glass-card {
+      background: rgba(255, 255, 255, 0.05);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow:
+        0 8px 32px rgba(0, 0, 0, 0.4),
+        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    }
+
+    .chip {
+      transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.12);
+    }
+    .chip:hover { transform: translateY(-2px); background: rgba(255,255,255,0.13); }
+    .chip.active {
+      background: linear-gradient(135deg, #7c3aed, #4f46e5);
+      border-color: transparent;
+      box-shadow: 0 0 20px rgba(124, 58, 237, 0.5);
+      transform: translateY(-2px);
+    }
+
+    .btn-donate {
+      background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%);
+      transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+      position: relative;
+      overflow: hidden;
+    }
+    .btn-donate::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, #9d5df5, #6366f1);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .btn-donate:hover::before { opacity: 1; }
+    .btn-donate:hover { transform: translateY(-2px); box-shadow: 0 8px 30px rgba(124, 58, 237, 0.6); }
+    .btn-donate:active { transform: scale(0.97); }
+    .btn-donate span { position: relative; z-index: 1; }
+    .btn-donate.processing { animation: pulse-glow 1s ease-in-out infinite; }
+
+    @keyframes pulse-glow {
+      0%, 100% { box-shadow: 0 0 20px rgba(124,58,237,0.4); }
+      50% { box-shadow: 0 0 40px rgba(124,58,237,0.8); }
+    }
+
+    .progress-bar-inner {
+      background: linear-gradient(90deg, #7c3aed, #818cf8, #7c3aed);
+      background-size: 200% 100%;
+      animation: shimmer 2s linear infinite;
+      transition: width 1s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    @keyframes shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    .amount-display {
+      transition: all 0.3s ease;
+      letter-spacing: -0.02em;
+    }
+    .amount-display.bump {
+      transform: scale(1.15);
+      color: #a78bfa;
+    }
+
+    /* Confetti */
+    .confetti-particle {
+      position: fixed;
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
+      pointer-events: none;
+      z-index: 9999;
+      animation: confetti-fall var(--duration) cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+    }
+    @keyframes confetti-fall {
+      0%   { transform: translateY(0) translateX(0) rotate(0deg); opacity: 1; }
+      100% { transform: translateY(var(--fall-y)) translateX(var(--fall-x)) rotate(var(--rotation)); opacity: 0; }
+    }
+
+    .status-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 500;
+      letter-spacing: 0.03em;
+      transition: all 0.4s ease;
+    }
+    .status-processing {
+      background: rgba(251, 191, 36, 0.15);
+      border: 1px solid rgba(251, 191, 36, 0.3);
+      color: #fbbf24;
+    }
+    .status-success {
+      background: rgba(52, 211, 153, 0.15);
+      border: 1px solid rgba(52, 211, 153, 0.3);
+      color: #34d399;
+    }
+
+    .dot-pulse {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: currentColor;
+      animation: dot-blink 1s ease-in-out infinite;
+    }
+    @keyframes dot-blink { 0%,100%{opacity:0.2} 50%{opacity:1} }
+
+    .achievement {
+      animation: slide-up 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+    @keyframes slide-up {
+      from { transform: translateY(20px); opacity: 0; }
+      to   { transform: translateY(0); opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="w-full max-w-md">
+    <div class="glass-card rounded-3xl p-8">
+
+      <!-- Header -->
+      <div class="flex items-center gap-3 mb-8">
+        <div class="w-10 h-10 rounded-2xl flex items-center justify-center"
+             style="background: linear-gradient(135deg,#7c3aed,#4f46e5)">
+          <i data-lucide="heart" class="w-5 h-5 text-white"></i>
+        </div>
+        <div>
+          <h1 class="text-white font-semibold text-lg leading-tight">Поддержать проект</h1>
+          <p class="text-white/40 text-xs">VocalPrint AI</p>
+        </div>
+        <div class="ml-auto">
+          <span class="text-white/20 text-xs">MVP</span>
+        </div>
+      </div>
+
+      <!-- Fund Balance -->
+      <div class="mb-6 text-center">
+        <p class="text-white/40 text-xs uppercase tracking-widest mb-1">Собрано</p>
+        <div class="flex items-baseline justify-center gap-1">
+          <span class="text-white/60 text-2xl font-light">$</span>
+          <span id="balance-display" class="amount-display text-white text-5xl font-bold">0</span>
+        </div>
+      </div>
+
+      <!-- Progress Bar -->
+      <div class="mb-8">
+        <div class="flex justify-between items-center mb-2">
+          <span class="text-white/50 text-xs flex items-center gap-1">
+            <i data-lucide="server" class="w-3 h-3"></i>
+            На серверы
+          </span>
+          <span id="progress-label" class="text-white/50 text-xs">0 / $1000</span>
+        </div>
+        <div class="h-2 rounded-full overflow-hidden" style="background: rgba(255,255,255,0.08)">
+          <div id="progress-bar" class="h-full rounded-full progress-bar-inner" style="width: 0%"></div>
+        </div>
+        <div id="milestone-badge" class="mt-3 hidden">
+          <div class="achievement status-badge status-success w-fit">
+            <i data-lucide="zap" class="w-3 h-3"></i>
+            <span id="milestone-text"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Divider -->
+      <div class="border-t border-white/5 mb-6"></div>
+
+      <!-- Chips -->
+      <p class="text-white/40 text-xs uppercase tracking-widest mb-3">Выбери сумму</p>
+      <div class="flex gap-3 mb-6">
+        <button class="chip flex-1 py-3 rounded-2xl text-white text-sm font-medium flex flex-col items-center gap-1"
+                data-amount="5" onclick="selectChip(this)">
+          <span class="text-lg">☕</span>
+          <span>$5</span>
+        </button>
+        <button class="chip flex-1 py-3 rounded-2xl text-white text-sm font-medium flex flex-col items-center gap-1"
+                data-amount="15" onclick="selectChip(this)">
+          <span class="text-lg">🍕</span>
+          <span>$15</span>
+        </button>
+        <button class="chip flex-1 py-3 rounded-2xl text-white text-sm font-medium flex flex-col items-center gap-1"
+                data-amount="50" onclick="selectChip(this)">
+          <span class="text-lg">🚀</span>
+          <span>$50</span>
+        </button>
+      </div>
+
+      <!-- Status -->
+      <div id="status-area" class="mb-4 h-8 flex items-center justify-center">
+        <!-- dynamic status badge here -->
+      </div>
+
+      <!-- Donate Button -->
+      <button id="donate-btn" onclick="handleDonate()"
+              class="btn-donate w-full py-4 rounded-2xl text-white font-semibold text-sm disabled:opacity-40"
+              disabled>
+        <span class="flex items-center justify-center gap-2">
+          <i data-lucide="sparkles" class="w-4 h-4"></i>
+          Поддержать
+        </span>
+      </button>
+
+      <!-- Footer note -->
+      <p class="text-center text-white/20 text-xs mt-5 flex items-center justify-center gap-1">
+        <i data-lucide="shield" class="w-3 h-3"></i>
+        Тестовый режим · Данные хранятся локально
+      </p>
+
+    </div>
+  </div>
+
+  <script>
+    // ── State ─────────────────────────────────────────────────────────────────
+    const GOAL = 1000;
+    let projectFund = parseFloat(localStorage.getItem('projectFund') || '0');
+    let selectedAmount = null;
+    let isProcessing = false;
+
+    // ── Init ──────────────────────────────────────────────────────────────────
+    lucide.createIcons();
+    renderBalance(projectFund, false);
+
+    // ── Chip selection ────────────────────────────────────────────────────────
+    function selectChip(el) {
+      if (isProcessing) return;
+      document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+      el.classList.add('active');
+      selectedAmount = parseFloat(el.dataset.amount);
+      document.getElementById('donate-btn').disabled = false;
+    }
+
+    // ── Handle donate ─────────────────────────────────────────────────────────
+    function handleDonate() {
+      if (!selectedAmount || isProcessing) return;
+      isProcessing = true;
+
+      const btn = document.getElementById('donate-btn');
+      btn.disabled = true;
+      btn.classList.add('processing');
+
+      showStatus('processing');
+
+      setTimeout(() => {
+        // Commit
+        projectFund = Math.min(projectFund + selectedAmount, GOAL);
+        localStorage.setItem('projectFund', projectFund);
+
+        btn.classList.remove('processing');
+        btn.disabled = false;
+        showStatus('success');
+        renderBalance(projectFund, true);
+        launchConfetti();
+        checkMilestone();
+
+        // Reset
+        setTimeout(() => {
+          clearStatus();
+          document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+          selectedAmount = null;
+          btn.disabled = true;
+          isProcessing = false;
+        }, 2000);
+
+      }, 1500);
+    }
+
+    // ── Render balance with count-up ──────────────────────────────────────────
+    function renderBalance(target, animate) {
+      const el = document.getElementById('balance-display');
+      const progressBar = document.getElementById('progress-bar');
+      const progressLabel = document.getElementById('progress-label');
+
+      const pct = Math.min((target / GOAL) * 100, 100).toFixed(1);
+      progressBar.style.width = pct + '%';
+      progressLabel.textContent = `$${target} / $${GOAL}`;
+
+      if (!animate) { el.textContent = target; return; }
+
+      // Count-up animation
+      const start = parseFloat(el.textContent) || 0;
+      const diff = target - start;
+      const duration = 800;
+      const startTime = performance.now();
+
+      el.classList.add('bump');
+      setTimeout(() => el.classList.remove('bump'), 300);
+
+      function tick(now) {
+        const elapsed = now - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        const ease = 1 - Math.pow(1 - progress, 3); // ease-out cubic
+        const current = Math.round(start + diff * ease);
+        el.textContent = current;
+        if (progress < 1) requestAnimationFrame(tick);
+        else el.textContent = target;
+      }
+      requestAnimationFrame(tick);
+    }
+
+    // ── Status badge ──────────────────────────────────────────────────────────
+    function showStatus(type) {
+      const area = document.getElementById('status-area');
+      if (type === 'processing') {
+        area.innerHTML = `
+          <div class="status-badge status-processing">
+            <div class="dot-pulse"></div>
+            Processing...
+          </div>`;
+      } else {
+        area.innerHTML = `
+          <div class="status-badge status-success achievement">
+            <i data-lucide="check-circle" class="w-3 h-3"></i>
+            Донат засчитан! Спасибо ❤️
+          </div>`;
+        lucide.createIcons();
+      }
+    }
+    function clearStatus() {
+      document.getElementById('status-area').innerHTML = '';
+    }
+
+    // ── Milestone check ───────────────────────────────────────────────────────
+    function checkMilestone() {
+      const badge = document.getElementById('milestone-badge');
+      const text  = document.getElementById('milestone-text');
+      const milestones = [
+        { pct: 10,  msg: '10% — Первый шаг сделан!' },
+        { pct: 25,  msg: '25% — Уже четверть пути 🎯' },
+        { pct: 50,  msg: '50% — Половина! Отлично 🔥' },
+        { pct: 75,  msg: '75% — Почти у цели 💎' },
+        { pct: 100, msg: '🎉 Цель достигнута!' },
+      ];
+      const pct = (projectFund / GOAL) * 100;
+      const hit = milestones.reverse().find(m => pct >= m.pct);
+      if (hit) {
+        text.textContent = hit.msg;
+        badge.classList.remove('hidden');
+        lucide.createIcons();
+      }
+    }
+
+    // ── Confetti ──────────────────────────────────────────────────────────────
+    function launchConfetti() {
+      const colors = ['#7c3aed','#818cf8','#34d399','#fbbf24','#f472b6','#60a5fa'];
+      const count = 60;
+      for (let i = 0; i < count; i++) {
+        setTimeout(() => {
+          const p = document.createElement('div');
+          p.className = 'confetti-particle';
+          const x = Math.random() * window.innerWidth;
+          const fallY = (200 + Math.random() * 400) + 'px';
+          const fallX = (Math.random() * 200 - 100) + 'px';
+          const rot   = (Math.random() * 720 - 360) + 'deg';
+          const dur   = (0.8 + Math.random() * 0.8) + 's';
+          p.style.cssText = `
+            left:${x}px; top:${Math.random() * window.innerHeight * 0.4}px;
+            background:${colors[Math.floor(Math.random()*colors.length)]};
+            --fall-y:${fallY}; --fall-x:${fallX};
+            --rotation:${rot}; --duration:${dur};
+            border-radius:${Math.random() > 0.5 ? '50%' : '2px'};
+          `;
+          document.body.appendChild(p);
+          setTimeout(() => p.remove(), 1600);
+        }, i * 18);
+      }
+    }
+  </script>
+</body>
+</html>

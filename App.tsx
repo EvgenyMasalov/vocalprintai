@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import AnalysisDashboard from './components/AnalysisDashboard';
 import { VocalAnalysis } from './types';
 import { GeminiService } from './services/geminiService';
+import SupportModule from './components/SupportModule';
+import FeatureStore from './components/FeatureStore';
 
 const App: React.FC = () => {
   const [analysisData, setAnalysisData] = useState<VocalAnalysis | null>(null);
@@ -114,17 +116,11 @@ const App: React.FC = () => {
                   className="w-full bg-black/50 border border-pink-500/20 p-4 text-white focus:outline-none focus:border-pink-500 transition-colors font-serif italic"
                 />
               </div>
+            </div>
 
-              <div className="space-y-4">
-                <label className="text-[10px] font-black uppercase tracking-[0.3em] text-pink-500/60">YouTube Референс</label>
-                <input
-                  type="text"
-                  value={referenceUrl}
-                  onChange={(e) => setReferenceUrl(e.target.value)}
-                  placeholder="https://youtube.com/..."
-                  className="w-full bg-black/50 border border-pink-500/20 p-4 text-white focus:outline-none focus:border-pink-500 transition-colors font-serif italic"
-                />
-              </div>
+            {/* Premium Features Store under Artist & Reference */}
+            <div className="w-full">
+              <FeatureStore onFeaturesChange={(features) => console.log('Active features:', features)} />
             </div>
 
             <div className="space-y-4">
@@ -208,6 +204,12 @@ const App: React.FC = () => {
               </div>
             )}
           </>
+        )}
+
+        {!showForm && !analysisData && (
+          <div className="mt-16 w-full">
+            <SupportModule />
+          </div>
         )}
       </div>
 
