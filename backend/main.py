@@ -69,37 +69,30 @@ async def save_result(data: dict):
 
 @app.post("/analyze")
 async def analyze_audio(file: UploadFile = File(...)):
-    # Save uploaded file to temp
     with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp:
         shutil.copyfileobj(file.file, tmp)
         tmp_path = tmp.name
 
     try:
-        # Load audio with librosa
         y, sr = librosa.load(tmp_path)
         
-        # 1. MFCCs
+        # Spectral Analysis Pipeline
         mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
         mfcc_mean = np.mean(mfccs, axis=1).tolist()
         
-        # 2. Spectral Centroid
         centroid = librosa.feature.spectral_centroid(y=y, sr=sr)
         centroid_mean = float(np.mean(centroid))
         
-        # 3. Pitch Tracking (F0)
         f0, voiced_flag, voiced_probs = librosa.pyin(y, fmin=librosa.note_to_hz('C2'), fmax=librosa.note_to_hz('C7'))
         f0_clean = f0[~np.isnan(f0)]
         f0_stability = float(np.std(f0_clean)) if len(f0_clean) > 0 else 0.0
         
-        # 4. Zero Crossing Rate (Noise/Airiness)
         zcr = librosa.feature.zero_crossing_rate(y)
         zcr_mean = float(np.mean(zcr))
         
-        # 5. Spectral Rolloff (Brightness)
         rolloff = librosa.feature.spectral_rolloff(y=y, sr=sr)
         rolloff_mean = float(np.mean(rolloff))
         
-        # 6. Spectral Contrast (Texture)
         contrast = librosa.feature.spectral_contrast(y=y, sr=sr)
         contrast_mean = np.mean(contrast, axis=1).tolist()
 

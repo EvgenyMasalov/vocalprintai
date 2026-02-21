@@ -223,8 +223,8 @@ export class GeminiService {
                 throw new Error(`Local backend error: ${librosaResponse.status}`);
               }
             } catch (e) {
-              console.warn("[Librosa Engine] CONNECTION FAILED. Ensure 'python backend/main.py' is running on port 8500.", e);
-              result = { content: `Spectral coefficients for ${artist}: MFCC detected (Simulated), Formants F1-F4 mapped.` };
+              console.error("[Librosa Engine] CONNECTION FAILED. Ensure 'python backend/main.py' is running on port 8500.", e);
+              throw new Error("Не удалось подключиться к спектральному ядру Librosa. Убедитесь, что бэкенд запущен.");
             }
           } else if (name === 'list_files') {
             try {
@@ -233,7 +233,7 @@ export class GeminiService {
               result = { files: data.files || [] };
             } catch (e) {
               console.error("[Simple RAG] Failed to list knowledge files:", e);
-              result = { files: ['vocal_thesaurus.md', 'expert_terminology.md'] }; // Fallback
+              throw new Error("Не удалось загрузить базу знаний. Проверьте соединение с бэкендом.");
             }
           } else if (name === 'read_file') {
             try {
