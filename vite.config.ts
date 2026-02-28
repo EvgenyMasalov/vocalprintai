@@ -6,13 +6,18 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
   return {
     server: {
-      port: 3000,
-      host: '0.0.0.0',
+      port: 8081,
+      host: 'localhost',
       proxy: {
         '/api-proxy': {
           target: 'https://api.polza.ai',
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/api-proxy/, '')
+        },
+        '/api': {
+          target: 'http://localhost:8500',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api/, '')
         }
       }
     },

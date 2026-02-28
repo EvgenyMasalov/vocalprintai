@@ -4,6 +4,10 @@ import { VocalAnalysis } from './types';
 import { GeminiService } from './services/geminiService';
 import SupportModule from './components/SupportModule';
 import FeatureStore from './components/FeatureStore';
+import AuthModal from './components/AuthModal';
+import { authService } from './services/authService';
+import { LogOut, User as UserIcon, Shield } from 'lucide-react';
+import AdminCMS from './components/AdminCMS';
 
 const App: React.FC = () => {
   const [analysisData, setAnalysisData] = useState<VocalAnalysis | null>(null);
@@ -18,6 +22,17 @@ const App: React.FC = () => {
   const [referenceUrl, setReferenceUrl] = useState('');
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [isDeepResearchActive, setIsDeepResearchActive] = useState(false);
+
+  // Auth state
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [showAdminCMS, setShowAdminCMS] = useState(false);
+
+  useEffect(() => {
+    setCurrentUser(authService.getCurrentUser());
+    setIsAdmin(authService.isAdmin());
+  }, []);
 
   useEffect(() => {
     const gemini = new GeminiService();
@@ -66,6 +81,10 @@ const App: React.FC = () => {
     }
   };
 
+  if (showAdminCMS) {
+    return <AdminCMS onBack={() => setShowAdminCMS(false)} />;
+  }
+
   if (analysisData) {
     return (
       <div className="min-h-screen bg-[#050505] p-8 md:p-24 overflow-x-hidden">
@@ -91,6 +110,57 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-[#050505] text-[#fce7f3] flex flex-col items-center justify-center p-8 font-serif">
       <h1 className="text-6xl md:text-8xl font-baroque mb-4 pink-glow text-center">VocalPrint AI</h1>
       <p className="text-pink-500/60 uppercase tracking-[0.5em] text-[10px] mb-12 text-center">Neural Vocal Manuscript Analysis</p>
+
+      {/* Auth Bar */}
+      <div className="fixed top-8 right-8 z-50 flex items-center gap-4">
+        {currentUser ? (
+          <div className="flex items-center gap-4 animate-in fade-in slide-in-from-right-4 duration-500">
+            <div className="flex items-center gap-2 px-4 py-2 border border-pink-500/20 bg-pink-500/5 backdrop-blur-md">
+              <UserIcon size={14} className="text-pink-500" />
+              <span className="text-[10px] font-black uppercase tracking-widest text-pink-100">{currentUser}</span>
+            </div>
+            {isAdmin && (
+              <button
+                onClick={() => setShowAdminCMS(true)}
+                className="flex items-center gap-2 px-4 py-2 border border-pink-500/50 bg-[#ff2d75]/10 text-pink-500 hover:bg-[#ff2d75] hover:text-black transition-all"
+                title="Admin Control Panel"
+              >
+                <Shield size={14} />
+                <span className="text-[10px] font-black uppercase tracking-widest">CMS</span>
+              </button>
+            )}
+            <button
+              onClick={() => {
+                authService.logout();
+                setCurrentUser(null);
+                setIsAdmin(false);
+                setShowAdminCMS(false);
+              }}
+              className="p-2 border border-pink-500/20 hover:border-pink-500/50 text-pink-500/50 hover:text-pink-500 transition-all hover:bg-pink-500/10"
+              title="Выйти"
+            >
+              <LogOut size={16} />
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setIsAuthModalOpen(true)}
+            className="px-6 py-2 border border-pink-500/30 text-pink-500 text-[10px] font-black uppercase tracking-widest hover:bg-pink-500 hover:text-black transition-all animate-in fade-in slide-in-from-right-4 duration-500"
+          >
+            Sign In / Sign Up
+          </button>
+        )}
+      </div>
+
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        onSuccess={(user) => {
+          setCurrentUser(user);
+          setIsAdmin(authService.isAdmin());
+          setIsAuthModalOpen(false);
+        }}
+      />
 
       <div className="baroque-panel p-10 md:p-16 max-w-2xl w-full text-center space-y-10 relative">
         <div className="absolute -top-2 -left-2 w-8 h-8 border-t-2 border-l-2 border-pink-500/50"></div>
@@ -174,7 +244,13 @@ const App: React.FC = () => {
             </p>
             <div className="pt-6">
               <button
-                onClick={() => setShowForm(true)}
+                onClick={() => {
+                  if (currentUser) {
+                    setShowForm(true);
+                  } else {
+                    setIsAuthModalOpen(true);
+                  }
+                }}
                 className="px-12 py-6 bg-[#ff2d75] text-black font-baroque font-black text-xs uppercase tracking-[0.3em] hover:bg-white transition-all shadow-[0_0_40px_rgba(255,45,117,0.4)] group active:scale-95"
               >
                 <span className="group-hover:scale-105 inline-block transition-transform">Начать Анализ</span>
@@ -210,7 +286,7 @@ const App: React.FC = () => {
           </>
         )}
 
-        {!showForm && !analysisData && (
+        {!showForm && !analysisData && currentUser && (
           <div className="mt-16 w-full">
             <SupportModule />
           </div>

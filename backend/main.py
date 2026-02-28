@@ -1,25 +1,100 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 import librosa
 import numpy as np
 import os
 import shutil
 import tempfile
 import uuid
+from datetime import timedelta
+
+from database import engine, Base, get_db
+from models import User
+from schemas import UserCreate, UserResponse, Token, TempKnowledge
+from auth_utils import verify_password, get_password_hash, create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
+
+ADMIN_SECRET = "vocalprint_admin_2024" # In a real app, this should be in .env
 
 app = FastAPI()
-
-class TempKnowledge(BaseModel):
-    content: str
 
 # Allow CORS for the frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:8081",
+        "http://127.0.0.1:8081",
+        "http://localhost:8082",
+        "http://127.0.0.1:8082",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/")
+async def root():
+    return {"message": "VocalPrint AI API is running"}
+
+@app.on_event("startup")
+async def startup():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+@app.post("/register", response_model=UserResponse)
+async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
+    # Check if username exists
+    result = await db.execute(select(User).filter(User.username == user.username))
+    if result.scalars().first():
+        raise HTTPException(status_code=400, detail="Username already registered")
+    
+    # Check if email exists
+    result = await db.execute(select(User).filter(User.email == user.email))
+    if result.scalars().first():
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    is_admin = False
+    if user.admin_secret == ADMIN_SECRET:
+        is_admin = True
+    elif user.admin_secret:
+         raise HTTPException(status_code=400, detail="Invalid admin secret")
+
+    hashed_password = get_password_hash(user.password)
+    db_user = User(
+        username=user.username,
+        email=user.email,
+        hashed_password=hashed_password,
+        is_admin=is_admin
+    )
+    db.add(db_user)
+    await db.commit()
+    await db.refresh(db_user)
+    return db_user
+
+@app.post("/token", response_model=Token)
+async def login_for_access_token(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(select(User).filter(User.username == form_data.username))
+    user = result.scalars().first()
+    
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer", "is_admin": user.is_admin}
 
 @app.get("/knowledge/list")
 async def list_knowledge_files():
@@ -159,6 +234,48 @@ async def analyze_audio(file: UploadFile = File(...)):
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
+@app.get("/admin/clients", response_model=list[UserResponse])
+async def get_clients(db: AsyncSession = Depends(get_db)):
+    # Simple version: list all users. In production, check if requester is admin.
+    result = await db.execute(select(User).order_by(User.created_at.desc()))
+    return result.scalars().all()
+
+@app.get("/admin/generations")
+async def get_last_generations():
+    results_dir = os.path.join(os.path.dirname(__file__), 'results')
+    if not os.path.exists(results_dir):
+        return []
+    
+    import json
+    files = sorted(
+        [f for f in os.listdir(results_dir) if f.endswith('.json')],
+        key=lambda x: os.path.getmtime(os.path.join(results_dir, x)),
+        reverse=True
+    )[:5]
+    
+    generations = []
+    for f in files:
+        with open(os.path.join(results_dir, f), 'r', encoding='utf-8') as file:
+            data = json.load(file)
+            generations.append({
+                "filename": f,
+                "artist": data.get("artistName"),
+                "timestamp": os.path.getmtime(os.path.join(results_dir, f))
+            })
+    return generations
+
+@app.post("/admin/rag/upload")
+async def upload_rag_file(file: UploadFile = File(...)):
+    knowledge_dir = os.path.join(os.path.dirname(__file__), 'knowledge')
+    if not os.path.exists(knowledge_dir):
+        os.makedirs(knowledge_dir)
+        
+    file_path = os.path.join(knowledge_dir, file.filename)
+    with open(file_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+        
+    return {"status": "success", "filename": file.filename}
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8500)
+    uvicorn.run(app, host="0.0.0.0", port=8500)

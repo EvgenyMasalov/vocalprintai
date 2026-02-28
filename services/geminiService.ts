@@ -76,7 +76,7 @@ export class GeminiService {
     }
     try {
       console.info(`[Archival Storage] Archiving analysis for ${data.artistName} to backend registry...`);
-      await fetch('http://localhost:8500/save_result', {
+      await fetch('/api/save_result', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
@@ -212,7 +212,7 @@ export class GeminiService {
 
           if (researchContent) {
             onProgress?.("Сохранение данных Deep Research в RAG...");
-            const tempRes = await fetch('http://localhost:8500/knowledge/temp', {
+            const tempRes = await fetch('/api/knowledge/temp', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ content: researchContent })
@@ -261,7 +261,7 @@ export class GeminiService {
               formData.append('file', audioFile);
 
               const startTime = Date.now();
-              const librosaResponse = await fetch('http://localhost:8500/analyze', {
+              const librosaResponse = await fetch('/api/analyze', {
                 method: 'POST',
                 body: formData
               });
@@ -281,7 +281,7 @@ export class GeminiService {
             }
           } else if (name === 'list_files') {
             try {
-              const res = await fetch('http://localhost:8500/knowledge/list');
+              const res = await fetch('/api/knowledge/list');
               const data = await res.json();
               result = { files: data.files || [] };
             } catch (e) {
@@ -290,7 +290,7 @@ export class GeminiService {
             }
           } else if (name === 'read_file') {
             try {
-              const res = await fetch(`http://localhost:8500/knowledge/read/${args.filename}`);
+              const res = await fetch(`/api/knowledge/read/${args.filename}`);
               const data = await res.json();
               result = { content: data.content || "File is empty or not found." };
             } catch (e) {
@@ -332,7 +332,7 @@ export class GeminiService {
     // PHASE 4: Cleanup temp file
     if (tempResearchFilename) {
       try {
-        await fetch(`http://localhost:8500/knowledge/temp/${tempResearchFilename}`, { method: 'DELETE' });
+        await fetch(`/api/knowledge/temp/${tempResearchFilename}`, { method: 'DELETE' });
         console.info(`[Deep Research] Cleaned up temp file: ${tempResearchFilename}`);
       } catch (e) {
         console.warn(`[Deep Research] Failed to cleanup ${tempResearchFilename}`, e);

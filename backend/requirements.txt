@@ -5,3 +5,9 @@ numpy
 python-multipart
 yt-dlp
 pydantic
+sqlalchemy
+aiosqlite
+passlib[bcrypt]
+python-jose[cryptography]
+python-dotenv
+email-validator
