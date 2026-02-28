@@ -92,12 +92,13 @@ export class GeminiService {
     onProgress?: (stage: string) => void,
     songStructure?: string,
     referenceUrl?: string,
-    audioFile?: File
+    audioFile?: File,
+    isDeepResearchEnabled: boolean = false
   ): Promise<VocalAnalysis> {
     const isCoreOnly = !referenceUrl && !audioFile && !songStructure;
 
     // 1. DATABASE/ARCHIVE CHECK (Optimized for speed)
-    if (isCoreOnly) {
+    if (isCoreOnly && !isDeepResearchEnabled) {
       const archive = this.getArchive();
       const cached = archive.find(item => item.artistName.toLowerCase() === artist.toLowerCase());
       if (cached) {
@@ -129,8 +130,8 @@ export class GeminiService {
         {
           "artistName": "Имя",
           "vocalRange": { "low": "Нижняя нота", "high": "Верхняя нота", "classification": "Тип голоса" },
-          "techniques": [10 объектов { "name", "description", "prominence" }],
-          "expertVerdict": "A long technical manuscript formatted with Markdown headers: ### TIMBRAL PROFILE, ### TECHNICAL DIAGNOSTICS, ### SEMANTIC TIMELINE.",
+          "techniques": [10 объектов { "name", "description", "prominence": "число от 75 до 100 (только High %)" }],
+          "expertVerdict": "A long technical manuscript formatted with Markdown headers: ### TIMBRAL PROFILE, ### TECHNICAL DIAGNOSTICS${!isCoreOnly ? ', ### SEMANTIC TIMELINE' : ''}.",
           "technicalDiagnostics": {
             "breathControl": { "index": 0-100, "status": "Short description" },
             "compressionFriction": { "index": 0-100, "status": "Short description" },
@@ -169,19 +170,71 @@ export class GeminiService {
           ### TIMBRAL PROFILE
           ### TECHNICAL DIAGNOSTICS
           ### SEMANTIC TIMELINE
+          ${isDeepResearchEnabled ? '### VOCAL FX (Используй данные из Deep Research файла)' : ''}
         - Рассчитай 'breathControl' и 'compressionFriction'.
         - СФОРМИРУЙ 'vocalSemanticMapping' (3-5 маркеров). Обращай внимание на маркеры структуры в тексте: [verse], [chorus], [bridge] и т.д.`
       },
       {
         role: "user",
         content: `АНАЛИЗ: ${artist}.
-        ${isCoreOnly ? "РЕЖИМ: CORE. Используй свои знания для заполнения всех полей. USE EXPERT KNOWLEDGE BASE for descriptive depth. 'expertVerdict' MUST use Markdown headers: ### TIMBRAL PROFILE, ### TECHNICAL DIAGNOSTICS. ALL TEXT IN ENGLISH." : `РЕЖИМ: SPECTRAL. ИСПОЛЬЗУЙ Librosa. Данные: URL=${referenceUrl || "-"}, Файл=${audioFile?.name || "-"}, Текст=${!!songStructure}. ИСПОЛЬЗУЙ маркеры [verse]/[chorus]. USE EXPERT KNOWLEDGE BASE for descriptive depth. 'expertVerdict' MUST contain: ### TIMBRAL PROFILE, ### TECHNICAL DIAGNOSTICS, ### SEMANTIC TIMELINE. Calculate 'radarMetrics' from spectral data. ALL TEXT IN ENGLISH.`}`
+        ${isCoreOnly ? "РЕЖИМ: CORE. Используй свои знания для заполнения всех полей. USE EXPERT KNOWLEDGE BASE for descriptive depth. 'expertVerdict' MUST use Markdown headers: ### TIMBRAL PROFILE, ### TECHNICAL DIAGNOSTICS. ALL TEXT IN ENGLISH." : `РЕЖИМ: SPECTRAL. ИСПОЛЬЗУЙ Librosa. Данные: URL=${referenceUrl || "-"}, Файл=${audioFile?.name || "-"}, Текст=${!!songStructure}. ИСПОЛЬЗУЙ маркеры [verse]/[chorus]. USE EXPERT KNOWLEDGE BASE for descriptive depth. 'expertVerdict' MUST contain: ### TIMBRAL PROFILE, ### TECHNICAL DIAGNOSTICS, ### SEMANTIC TIMELINE${isDeepResearchEnabled ? ', ### VOCAL FX' : ''}. Calculate 'radarMetrics' from spectral data. ALL TEXT IN ENGLISH.`}
+        ${isDeepResearchEnabled ? 'ВАЖНО: Активирован режим Deep Research. Используй инструмент `read_file`, чтобы прочитать временный файл исследований. Включи эти новые характеристики в TIMBRAL PROFILE и TECHNICAL DIAGNOSTICS, и создай массивную секцию ### VOCAL FX о способах обработки вокала этого артиста.' : ''}`
       }
     ];
 
     let responseData;
+    let tempResearchFilename: string | null = null;
+    let researchToolsContext = this.getTools();
 
-    if (isCoreOnly) {
+    // PHASE 1: Deep Research (Tongyi)
+    if (isDeepResearchEnabled) {
+      onProgress?.("Глубокий поиск характеристик (Tongyi DeepResearch)...");
+      try {
+        const researchRes = await fetch(`${this.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.apiKey}`
+          },
+          body: JSON.stringify({
+            model: "alibaba/tongyi-deepresearch-30b-a3b",
+            web_search: true, // Specific Polza AI flag based on interface
+            messages: [{
+              role: "user",
+              content: `Search the internet for the top 10 primary vocal characteristics and most common vocal processing techniques (Vocal FX) used by the artist ${artist}. Provide a detailed Markdown summary in English.`
+            }],
+          })
+        });
+
+        if (researchRes.ok) {
+          const researchData = await researchRes.json();
+          const researchContent = researchData.choices?.[0]?.message?.content;
+
+          if (researchContent) {
+            onProgress?.("Сохранение данных Deep Research в RAG...");
+            const tempRes = await fetch('http://localhost:8500/knowledge/temp', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ content: researchContent })
+            });
+
+            if (tempRes.ok) {
+              const tempData = await tempRes.json();
+              tempResearchFilename = tempData.filename;
+              // Instruct OpenAI about the specific file
+              messages[0].content += `\n\n[DEEP RESEARCH ACTIVE] ПРЯМО СЕЙЧАС ИСПОЛЬЗУЙ инструмент \`read_file\` с аргументом {"filename": "${tempResearchFilename}"}, чтобы получить эксклюзивные данные поиска в интернете для секций TIMBRAL PROFILE и VOCAL FX.`;
+              console.info(`[Deep Research] Saved temp file: ${tempResearchFilename}`);
+            }
+          }
+        } else {
+          console.warn("[Deep Research] Tongyi API call failed:", await researchRes.text());
+        }
+      } catch (e) {
+        console.warn("[Deep Research] Process failed, continuing with normal analysis.", e);
+      }
+    }
+
+    if (isCoreOnly && !isDeepResearchEnabled) {
       responseData = await this.callOpenAI(messages, false);
     } else {
       responseData = await this.callOpenAI(messages);
@@ -265,14 +318,25 @@ export class GeminiService {
         {
           role: "user",
           content: `Сформируй ФИНАЛЬНЫЙ JSON (VocalAnalysis) со всеми расчетами и 10 характеристиками вокала. 
-                В поле 'expertVerdict' ОБЯЗАТЕЛЬНО включи три раздела, каждый из которых должен начинаться с Markdown заголовка и содержать минимум 2-3 предложения глубокого технического анализа:
+                В поле 'expertVerdict' ОБЯЗАТЕЛЬНО включи ${isDeepResearchEnabled ? 'ЧЕТЫРЕ' : 'ТРИ'} раздела, каждый из которых должен начинаться с Markdown заголовка и содержать минимум 2-3 предложения глубокого технического анализа:
                 ### TIMBRAL PROFILE
                 ### TECHNICAL DIAGNOSTICS
-                ### SEMANTIC TIMELINE (если предоставлен текст/структура). 
+                ### SEMANTIC TIMELINE (если предоставлен текст/структура).
+                ${isDeepResearchEnabled ? '### VOCAL FX (Используй найденные техники обработки вокала)' : ''} 
                 ВЕСЬ ТЕКСТ НА АНГЛИЙСКОМ.`
         }
       ];
       responseData = await this.callOpenAI(finalPrompt, false);
+    }
+
+    // PHASE 4: Cleanup temp file
+    if (tempResearchFilename) {
+      try {
+        await fetch(`http://localhost:8500/knowledge/temp/${tempResearchFilename}`, { method: 'DELETE' });
+        console.info(`[Deep Research] Cleaned up temp file: ${tempResearchFilename}`);
+      } catch (e) {
+        console.warn(`[Deep Research] Failed to cleanup ${tempResearchFilename}`, e);
+      }
     }
 
     const content = responseData.choices[0].message.content;

@@ -1,12 +1,17 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import librosa
 import numpy as np
 import os
 import shutil
 import tempfile
+import uuid
 
 app = FastAPI()
+
+class TempKnowledge(BaseModel):
+    content: str
 
 # Allow CORS for the frontend
 app.add_middleware(
@@ -42,6 +47,45 @@ async def read_knowledge_file(filename: str):
             content = f.read()
             
         return {"filename": safe_filename, "content": content}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/knowledge/temp")
+async def create_temp_knowledge(data: TempKnowledge):
+    try:
+        knowledge_dir = os.path.join(os.path.dirname(__file__), 'knowledge')
+        if not os.path.exists(knowledge_dir):
+            os.makedirs(knowledge_dir)
+            
+        # Generate a unique temp filename
+        filename = f"temp_research_{uuid.uuid4().hex[:8]}.md"
+        file_path = os.path.join(knowledge_dir, filename)
+        
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(data.content)
+            
+        return {"status": "success", "filename": filename}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/knowledge/temp/{filename}")
+async def delete_temp_knowledge(filename: str):
+    try:
+        safe_filename = os.path.basename(filename)
+        
+        # Security check: only allow deleting files prefixed with "temp_"
+        if not safe_filename.startswith("temp_"):
+            raise HTTPException(status_code=403, detail="Cannot delete core knowledge files")
+            
+        knowledge_dir = os.path.join(os.path.dirname(__file__), 'knowledge')
+        content_path = os.path.join(knowledge_dir, safe_filename)
+        
+        if os.path.exists(content_path):
+            os.remove(content_path)
+            return {"status": "success"}
+        else:
+            # Idempotent delete
+            return {"status": "ignored", "detail": "File not found"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

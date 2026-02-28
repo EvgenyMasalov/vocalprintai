@@ -17,6 +17,7 @@ const App: React.FC = () => {
   const [songStructure, setSongStructure] = useState('');
   const [referenceUrl, setReferenceUrl] = useState('');
   const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [isDeepResearchActive, setIsDeepResearchActive] = useState(false);
 
   useEffect(() => {
     const gemini = new GeminiService();
@@ -51,7 +52,8 @@ const App: React.FC = () => {
         (stage) => setStatus(stage),
         songStructure,
         referenceUrl,
-        audioFile || undefined
+        audioFile || undefined,
+        isDeepResearchActive
       );
       console.log("Analysis Result Received:", result);
       gemini.saveToArchive(result);
@@ -120,7 +122,9 @@ const App: React.FC = () => {
 
             {/* Premium Features Store under Artist & Reference */}
             <div className="w-full">
-              <FeatureStore onFeaturesChange={(features) => console.log('Active features:', features)} />
+              <FeatureStore onFeaturesChange={(features) => {
+                setIsDeepResearchActive(features.includes('deep-research'));
+              }} />
             </div>
 
             <div className="space-y-4">
