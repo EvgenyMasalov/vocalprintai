@@ -7,16 +7,18 @@ export default defineConfig(({ mode }) => {
   return {
     server: {
       port: 8081,
-      host: 'localhost',
+      host: '127.0.0.1',
       proxy: {
         '/api-proxy': {
           target: 'https://api.polza.ai',
           changeOrigin: true,
+          secure: false,
           rewrite: (path) => path.replace(/^\/api-proxy/, '')
         },
         '/api': {
           target: 'http://localhost:8500',
           changeOrigin: true,
+          secure: false,
           rewrite: (path) => path.replace(/^\/api/, '')
         }
       }

@@ -5,6 +5,7 @@ export interface AdminClient {
     username: string;
     email: string;
     is_admin: boolean;
+    balance: number;
     created_at: string;
 }
 
@@ -30,6 +31,26 @@ export const adminService = {
             headers: { 'Authorization': `Bearer ${token}` }
         });
         if (!response.ok) throw new Error('Failed to fetch generations');
+        return response.json();
+    },
+
+    async deleteUser(userId: number) {
+        const token = localStorage.getItem('token');
+        const response = await fetch(`${API_URL}/admin/users/${userId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!response.ok) throw new Error('Failed to delete user');
+        return response.json();
+    },
+
+    async deleteZeroBalanceUsers() {
+        const token = localStorage.getItem('token');
+        const response = await fetch(`${API_URL}/admin/users/delete-zero-balance`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!response.ok) throw new Error('Failed to delete zero balance users');
         return response.json();
     },
 

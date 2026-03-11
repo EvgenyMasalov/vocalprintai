@@ -19,9 +19,10 @@ export const AVAILABLE_FEATURES: PremiumFeature[] = [
 
 interface FeatureStoreProps {
   onFeaturesChange?: (activeFeatures: string[]) => void;
+  isAdmin?: boolean;
 }
 
-const FeatureStore: React.FC<FeatureStoreProps> = ({ onFeaturesChange }) => {
+const FeatureStore: React.FC<FeatureStoreProps> = ({ onFeaturesChange, isAdmin = false }) => {
   const [unlockedFeatures, setUnlockedFeatures] = useState<string[]>([]);
   const [activeFeatures, setActiveFeatures] = useState<string[]>([]);
   const [balance, setBalance] = useState<number>(0);
@@ -56,13 +57,15 @@ const FeatureStore: React.FC<FeatureStoreProps> = ({ onFeaturesChange }) => {
   const handleToggle = (feature: PremiumFeature) => {
     // If not unlocked, try to buy
     if (!unlockedFeatures.includes(feature.id)) {
-      if (balance >= feature.price) {
+      if (isAdmin || balance >= feature.price) {
         // Buy animation
         setUnlockingId(feature.id);
 
         setTimeout(() => {
-          const newBalance = Math.max(0, balance - feature.price);
-          syncBalance(newBalance);
+          if (!isAdmin) {
+            const newBalance = Math.max(0, balance - feature.price);
+            syncBalance(newBalance);
+          }
 
           const newUnlocked = [...unlockedFeatures, feature.id];
           setUnlockedFeatures(newUnlocked);

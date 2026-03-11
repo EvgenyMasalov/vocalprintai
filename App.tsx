@@ -192,9 +192,12 @@ const App: React.FC = () => {
 
             {/* Premium Features Store under Artist & Reference */}
             <div className="w-full">
-              <FeatureStore onFeaturesChange={(features) => {
-                setIsDeepResearchActive(features.includes('deep-research'));
-              }} />
+              <FeatureStore
+                isAdmin={isAdmin}
+                onFeaturesChange={(features) => {
+                  setIsDeepResearchActive(features.includes('deep-research'));
+                }}
+              />
             </div>
 
             <div className="space-y-4">
@@ -288,7 +291,7 @@ const App: React.FC = () => {
 
         {!showForm && !analysisData && currentUser && (
           <div className="mt-16 w-full">
-            <SupportModule />
+            <SupportModule isAdmin={isAdmin} />
           </div>
         )}
       </div>

@@ -90,7 +90,29 @@ const AdminCMS: React.FC<AdminCMSProps> = ({ onBack }) => {
             <div className="flex-1 p-12 overflow-y-auto">
                 {activeTab === 'clients' && (
                     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                        <h3 className="text-[10px] font-black uppercase tracking-[0.5em] text-pink-500/40">Зарегистрированные Клиенты</h3>
+                        <div className="flex justify-between items-center">
+                            <h3 className="text-[10px] font-black uppercase tracking-[0.5em] text-pink-500/40">Зарегистрированные Клиенты</h3>
+                            <button
+                                onClick={async () => {
+                                    if (window.confirm('Вы уверены, что хотите удалить ВСЕХ пользователей с нулевым балансом?')) {
+                                        setLoading(true);
+                                        try {
+                                            const result = await adminService.deleteZeroBalanceUsers();
+                                            alert(`Успешно удалено пользователей: ${result.deleted_count}`);
+                                            await fetchClients();
+                                        } catch (error) {
+                                            console.error(error);
+                                            alert('Ошибка при удалении: ' + (error instanceof Error ? error.message : 'Неизвестная ошибка'));
+                                        } finally {
+                                            setLoading(false);
+                                        }
+                                    }
+                                }}
+                                className="px-4 py-2 border border-red-500/30 text-red-500 text-[10px] font-black uppercase tracking-widest hover:bg-red-500 hover:text-white transition-all"
+                            >
+                                Удалить нулевые балансы
+                            </button>
+                        </div>
                         {loading ? <p className="italic text-pink-500/60">Загрузка данных...</p> : (
                             <div className="grid gap-4">
                                 {clients.map(client => (
@@ -104,9 +126,39 @@ const AdminCMS: React.FC<AdminCMSProps> = ({ onBack }) => {
                                                 <div className="text-[10px] uppercase text-pink-500/40">{client.email}</div>
                                             </div>
                                         </div>
-                                        <div className="text-right">
-                                            <div className="text-[9px] uppercase tracking-widest text-pink-500/30">Зарегистрирован</div>
-                                            <div className="text-[11px] font-mono text-pink-500/60">{new Date(client.created_at).toLocaleDateString()}</div>
+
+                                        <div className="flex items-center gap-8">
+                                            <div className="text-right">
+                                                <div className="text-[9px] uppercase tracking-widest text-pink-500/30">Баланс</div>
+                                                <div className={`text-sm font-mono font-bold ${client.is_admin ? 'text-pink-500 animate-pulse' : (client.balance > 0 ? 'text-emerald-400' : 'text-pink-500/60')}`}>
+                                                    {client.is_admin ? 'Unlimited' : `$${client.balance || 0}`}
+                                                </div>
+                                            </div>
+
+                                            <div className="text-right">
+                                                <div className="text-[9px] uppercase tracking-widest text-pink-500/30">Зарегистрирован</div>
+                                                <div className="text-[11px] font-mono text-pink-500/60">{new Date(client.created_at).toLocaleDateString()}</div>
+                                            </div>
+
+                                            {!client.is_admin && (
+                                                <button
+                                                    onClick={async () => {
+                                                        if (window.confirm(`Удалить пользователя ${client.username}?`)) {
+                                                            try {
+                                                                await adminService.deleteUser(client.id);
+                                                                await fetchClients();
+                                                            } catch (error) {
+                                                                console.error(error);
+                                                                alert('Ошибка при удалении');
+                                                            }
+                                                        }
+                                                    }}
+                                                    className="p-2 opacity-0 group-hover:opacity-100 text-red-500/50 hover:text-red-500 transition-all"
+                                                    title="Удалить пользователя"
+                                                >
+                                                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
                                 ))}

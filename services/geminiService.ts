@@ -41,6 +41,23 @@ export class GeminiService {
             required: ["filename"],
           }
         }
+      },
+      {
+        type: "function",
+        function: {
+          name: "analyze_audio",
+          description: "Analyzes the uploaded audio file using Librosa to extract spectral metrics (MFCC, centroid, etc.). Use this tool whenever an audio file is provided in SPECTRAL mode.",
+          parameters: {
+            type: "object",
+            properties: {
+              artist: {
+                type: "string",
+                description: "The name of the artist being analyzed.",
+              },
+            },
+            required: ["artist"],
+          }
+        }
       }
     ];
   }
@@ -161,18 +178,19 @@ export class GeminiService {
           }
         }
 
-        РЕЖИМ [SPECTRAL ANALYSIS]: (Есть Файл/URL/Текст). Используй Librosa для MFCC/Формант.
-        
+        РЕЖИМ [SPECTRAL ANALYSIS]: (Есть Файл/URL/Текст).
         ОБЯЗАТЕЛЬНО: 
-        - JSON формат, 10 характеристик.
-        - ВЕСЬ ТЕКСТ НА АНГЛИЙСКОМ (ENGLISH ONLY).
-        - Поле 'expertVerdict' ДОЛЖНО быть разделено на секции используя Markdown заголовки:
+        1. ЕСЛИ ПРЕДОСТАВЛЕН АУДИОФАЙЛ, ТЫ ДОЛЖЕН СНАЧАЛА ВЫЗВАТЬ ИНСТРУМЕНТ 'analyze_audio', ЧТОБЫ ПОЛУЧИТЬ СПЕКТРАЛЬНЫЕ МЕТРИКИ (MFCC, Форманты).
+        2. ИСПОЛЬЗУЙ ПОЛУЧЕННЫЕ ДАННЫЕ ДЛЯ ЗАПОЛНЕНИЯ radarMetrics И ТЕХНИЧЕСКОГО АНАЛИЗА.
+        3. JSON формат, 10 характеристик.
+        4. ВЕСЬ ТЕКСТ НА АНГЛИЙСКОМ (ENGLISH ONLY).
+        5. Поле 'expertVerdict' ДОЛЖНО быть разделено на секции используя Markdown заголовки:
           ### TIMBRAL PROFILE
           ### TECHNICAL DIAGNOSTICS
           ### SEMANTIC TIMELINE
           ${isDeepResearchEnabled ? '### VOCAL FX (Используй данные из Deep Research файла)' : ''}
-        - Рассчитай 'breathControl' и 'compressionFriction'.
-        - СФОРМИРУЙ 'vocalSemanticMapping' (3-5 маркеров). Обращай внимание на маркеры структуры в тексте: [verse], [chorus], [bridge] и т.д.`
+        6. Рассчитай 'breathControl' и 'compressionFriction'.
+        7. СФОРМИРУЙ 'vocalSemanticMapping' (3-5 маркеров). Обращай внимание на маркеры структуры в тексте: [verse], [chorus], [bridge] и т.д.`
       },
       {
         role: "user",
@@ -253,31 +271,35 @@ export class GeminiService {
 
           let result;
 
-          if (audioFile && name === 'read_file' && !args.filename?.endsWith('.md')) {
+          if (name === 'analyze_audio') {
             onProgress?.("Обработка аудио через Python-ядро...");
-            console.info(`[Real Librosa] Sending ${audioFile.name} (${audioFile.size} bytes) to backend...`);
-            try {
-              const formData = new FormData();
-              formData.append('file', audioFile);
+            if (!audioFile) {
+              result = { error: "No audio file uploaded to analyze." };
+            } else {
+              console.info(`[Real Librosa] Sending ${audioFile.name} (${audioFile.size} bytes) to backend...`);
+              try {
+                const formData = new FormData();
+                formData.append('file', audioFile);
 
-              const startTime = Date.now();
-              const librosaResponse = await fetch('/api/analyze', {
-                method: 'POST',
-                body: formData
-              });
+                const startTime = Date.now();
+                const librosaResponse = await fetch('/api/analyze', {
+                  method: 'POST',
+                  body: formData
+                });
 
-              if (librosaResponse.ok) {
-                const spectralData = await librosaResponse.json();
-                console.info(`[Real Librosa] Success in ${Date.now() - startTime}ms:`, spectralData);
-                result = { content: `REAL LIBROSA DATA for ${artist}: ` + JSON.stringify(spectralData.metrics) };
-              } else {
-                const errorText = await librosaResponse.text();
-                console.error("[Real Librosa] Backend error:", librosaResponse.status, errorText);
-                throw new Error(`Local backend error: ${librosaResponse.status}`);
+                if (librosaResponse.ok) {
+                  const spectralData = await librosaResponse.json();
+                  console.info(`[Real Librosa] Success in ${Date.now() - startTime}ms:`, spectralData);
+                  result = { content: `REAL LIBROSA DATA for ${artist}: ` + JSON.stringify(spectralData.metrics) };
+                } else {
+                  const errorText = await librosaResponse.text();
+                  console.error("[Real Librosa] Backend error:", librosaResponse.status, errorText);
+                  result = { error: `Local backend error: ${librosaResponse.status}` };
+                }
+              } catch (e) {
+                console.error("[Librosa Engine] CONNECTION FAILED. Ensure 'python backend/main.py' is running on port 8500.", e);
+                result = { error: "Не удалось подключиться к спектральному ядру Librosa. Убедитесь, что бэкенд запущен." };
               }
-            } catch (e) {
-              console.error("[Librosa Engine] CONNECTION FAILED. Ensure 'python backend/main.py' is running on port 8500.", e);
-              throw new Error("Не удалось подключиться к спектральному ядру Librosa. Убедитесь, что бэкенд запущен.");
             }
           } else if (name === 'list_files') {
             try {
@@ -318,11 +340,13 @@ export class GeminiService {
         {
           role: "user",
           content: `Сформируй ФИНАЛЬНЫЙ JSON (VocalAnalysis) со всеми расчетами и 10 характеристиками вокала. 
-                В поле 'expertVerdict' ОБЯЗАТЕЛЬНО включи ${isDeepResearchEnabled ? 'ЧЕТЫРЕ' : 'ТРИ'} раздела, каждый из которых должен начинаться с Markdown заголовка и содержать минимум 2-3 предложения глубокого технического анализа:
+                В поле 'expertVerdict' ОБЯЗАТЕЛЬНО включи ${isDeepResearchEnabled ? 'ЧЕТЫРЕ' : 'ТРИ'} раздела. Каждое название раздела должно быть на новой строке и начинаться с ###:
                 ### TIMBRAL PROFILE
                 ### TECHNICAL DIAGNOSTICS
-                ### SEMANTIC TIMELINE (если предоставлен текст/структура).
-                ${isDeepResearchEnabled ? '### VOCAL FX (Используй найденные техники обработки вокала)' : ''} 
+                ### SEMANTIC TIMELINE
+                ${isDeepResearchEnabled ? '### VOCAL FX' : ''} 
+                
+                ВАЖНО: Внутри экспертного заключения (expertVerdict) НЕ используй другие заголовки, кроме этих четырех. Используй только обычный текст и жирный шрифт для акцентов.
                 ВЕСЬ ТЕКСТ НА АНГЛИЙСКОМ.`
         }
       ];
@@ -357,12 +381,25 @@ export class GeminiService {
         classification: vocalRange.classification || parsed.classification || parsed.voiceType || 'General'
       };
 
+      // Surgical fallback for missing fields
+      let expertVerdict = parsed.expertVerdict || parsed.verdict || parsed.manuscript || parsed.analysis;
+      
+      // If we still don't have a verdict but the AI wrote a lot of text, use the raw content (cleaned of JSON)
+      if (!expertVerdict || expertVerdict.includes('Pending analysis...')) {
+        const rawText = content.replace(/\{[\s\S]*\}/, '').trim();
+        if (rawText.length > 100) {
+          expertVerdict = rawText;
+        } else {
+          expertVerdict = 'TIMBRAL PROFILE: Analysis result available in JSON data.\nTECHNICAL DIAGNOSTICS: Analysis result available in JSON data.\nSEMANTIC TIMELINE: Analysis result available in JSON data.';
+        }
+      }
+
       const finalParsed: VocalAnalysis = {
         ...parsed,
         artistName: parsed.artistName || artist,
         vocalRange: finalVocalRange,
         groundingSources: [{ title: isCoreOnly ? "Archival Knowledge" : "Librosa Spectral Engine", uri: "https://polza.ai" }],
-        expertVerdict: parsed.expertVerdict || parsed.verdict || parsed.manuscript || 'TIMBRAL PROFILE: Pending analysis...\nTECHNICAL DIAGNOSTICS: Pending analysis...\nSEMANTIC TIMELINE: Pending analysis...',
+        expertVerdict: expertVerdict,
         techniques: Array.isArray(parsed.techniques) ? parsed.techniques : [],
         vocalSemanticMapping: Array.isArray(parsed.vocalSemanticMapping) ? parsed.vocalSemanticMapping : []
       };

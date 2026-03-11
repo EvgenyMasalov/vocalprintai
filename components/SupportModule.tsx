@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Heart, Server, Zap, Sparkles, CheckCircle, Shield } from 'lucide-react';
 
-const SupportModule: React.FC = () => {
+const SupportModule: React.FC<{ isAdmin?: boolean }> = ({ isAdmin = false }) => {
   const GOAL = 1000;
   const [projectFund, setProjectFund] = useState(0);
   const [selectedAmount, setSelectedAmount] = useState<number | null>(null);
@@ -172,9 +172,9 @@ const SupportModule: React.FC = () => {
               <span className="text-white/60 text-2xl font-light">$</span>
               <span
                 ref={balanceDisplayRef}
-                className="text-white text-5xl font-bold transition-all duration-300 transform"
+                className={`text-white font-bold transition-all duration-300 transform ${isAdmin ? 'text-2xl mt-2' : 'text-5xl'}`}
               >
-                {projectFund}
+                {isAdmin ? 'Unlimited' : projectFund}
               </span>
             </div>
           </div>
@@ -185,7 +185,7 @@ const SupportModule: React.FC = () => {
               <span className="text-white/50 text-xs flex items-center gap-1">
                 <Server className="w-3 h-3" /> На серверы
               </span>
-              <span className="text-white/50 text-xs">${projectFund} / ${GOAL}</span>
+              <span className="text-white/50 text-xs">{isAdmin ? 'Unlimited' : `$${projectFund}`} / ${GOAL}</span>
             </div>
             <div className="h-2 rounded-full overflow-hidden bg-white/10">
               <div

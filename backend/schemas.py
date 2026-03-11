@@ -13,6 +13,12 @@ class UserCreate(UserBase):
 class UserResponse(UserBase):
     id: int
     is_admin: bool
+    balance: int
+    login_count: int
+    request_count: int
+    spectral_count: int
+    deep_research_count: int
+    replenishment_total: int
     created_at: datetime
 
     class Config:

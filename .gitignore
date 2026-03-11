@@ -19,6 +19,19 @@ backend/results/
 backend/__pycache__/
 *.pyc
 
+# Virtual Environments
+venv/
+backend/venv/
+.env
+.env.local
+
+# Test data and scripts
+backend/*.wav
+backend/test_*.py
+backend/simple_test.py
+backend/check_*.py
+!backend/check_ready.py
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

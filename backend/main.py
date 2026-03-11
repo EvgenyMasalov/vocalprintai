@@ -23,14 +23,7 @@ app = FastAPI()
 # Allow CORS for the frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:8081",
-        "http://127.0.0.1:8081",
-        "http://localhost:8082",
-        "http://127.0.0.1:8082",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -44,6 +37,16 @@ async def root():
 async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    # Прогрев librosa при старте — гарантирует загрузку всех C-расширений
+    import asyncio, numpy as np
+    def _warm_up():
+        y = np.zeros(22050, dtype=np.float32)
+        librosa.feature.mfcc(y=y, sr=22050, n_mfcc=13)
+        librosa.feature.spectral_centroid(y=y, sr=22050)
+        librosa.yin(y, fmin=librosa.note_to_hz('C2'), fmax=librosa.note_to_hz('C7'))
+        print("[startup] librosa прогрет и готов к работе.", flush=True)
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _warm_up)
 
 @app.post("/register", response_model=UserResponse)
 async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
@@ -68,7 +71,8 @@ async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
         username=user.username,
         email=user.email,
         hashed_password=hashed_password,
-        is_admin=is_admin
+        is_admin=is_admin,
+        balance=0 # Default balance
     )
     db.add(db_user)
     await db.commit()
@@ -94,6 +98,11 @@ async def login_for_access_token(
     access_token = create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
     )
+    
+    # Increment login count
+    user.login_count += 1
+    await db.commit()
+    
     return {"access_token": access_token, "token_type": "bearer", "is_admin": user.is_admin}
 
 @app.get("/knowledge/list")
@@ -165,14 +174,19 @@ async def delete_temp_knowledge(filename: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/save_result")
-async def save_result(data: dict):
+async def save_result(data: dict, db: AsyncSession = Depends(get_db)):
     try:
         # Create results directory if it doesn't exist
         results_dir = os.path.join(os.path.dirname(__file__), 'results')
         if not os.path.exists(results_dir):
             os.makedirs(results_dir)
             
-        artist_name = data.get("artistName", "Unknown_Artist").replace(" ", "_")
+        artist_name = data.get("artistName", "Unknown_Artist")
+        # Sanitize filename for Windows: remove < > : " / \ | ? *
+        import re
+        artist_name = re.sub(r'[<>:"/\\|?*]', '', artist_name).replace(" ", "_")
+        if not artist_name: artist_name = "Unknown_Artist"
+        
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"analysis_{artist_name}_{timestamp}.json"
@@ -182,18 +196,40 @@ async def save_result(data: dict):
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
             
+        # Update user stats if username is provided
+        username = data.get("username")
+        if username:
+            result = await db.execute(select(User).filter(User.username == username))
+            user = result.scalars().first()
+            if user:
+                user.request_count += 1
+                if data.get("isDeepResearchEnabled"):
+                    user.deep_research_count += 1
+                if data.get("isSpectralEnabled"):
+                    user.spectral_count += 1
+                await db.commit()
+        
         return {"status": "success", "filename": filename, "path": file_path}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/analyze")
 async def analyze_audio(file: UploadFile = File(...)):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp:
-        shutil.copyfileobj(file.file, tmp)
-        tmp_path = tmp.name
-
     try:
-        y, sr = librosa.load(tmp_path)
+        # Check if file is empty
+        file.file.seek(0, os.SEEK_END)
+        size = file.file.tell()
+        file.file.seek(0)
+        
+        if size == 0:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmp_path = tmp.name
+
+        # Ensure file is closed before librosa loads it
+        y, sr = librosa.load(tmp_path, sr=22050)
         
         # Spectral Analysis Pipeline
         mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
@@ -202,7 +238,8 @@ async def analyze_audio(file: UploadFile = File(...)):
         centroid = librosa.feature.spectral_centroid(y=y, sr=sr)
         centroid_mean = float(np.mean(centroid))
         
-        f0, voiced_flag, voiced_probs = librosa.pyin(y, fmin=librosa.note_to_hz('C2'), fmax=librosa.note_to_hz('C7'))
+        # Use yin instead of pyin for speed
+        f0 = librosa.yin(y, fmin=librosa.note_to_hz('C2'), fmax=librosa.note_to_hz('C7'), sr=sr)
         f0_clean = f0[~np.isnan(f0)]
         f0_stability = float(np.std(f0_clean)) if len(f0_clean) > 0 else 0.0
         
@@ -229,16 +266,48 @@ async def analyze_audio(file: UploadFile = File(...)):
             }
         }
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+        if 'tmp_path' in locals() and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except PermissionError:
+                # On Windows, sometimes file descriptors are held longer than expected
+                import time
+                try:
+                    time.sleep(0.1)
+                    os.remove(tmp_path)
+                except:
+                    pass
 
 @app.get("/admin/clients", response_model=list[UserResponse])
 async def get_clients(db: AsyncSession = Depends(get_db)):
     # Simple version: list all users. In production, check if requester is admin.
     result = await db.execute(select(User).order_by(User.created_at.desc()))
     return result.scalars().all()
+
+@app.get("/admin/stats", response_model=list[UserResponse])
+async def get_user_stats(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).order_by(User.created_at.desc()))
+    return result.scalars().all()
+
+from pydantic import BaseModel
+class ReplenishRequest(BaseModel):
+    username: str
+    amount: int
+
+@app.post("/user/replenish")
+async def replenish_balance(req: ReplenishRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).filter(User.username == req.username))
+    user = result.scalars().first()
+    if user:
+        user.balance += req.amount
+        user.replenishment_total += req.amount
+        await db.commit()
+        return {"status": "success", "new_balance": user.balance}
+    raise HTTPException(status_code=404, detail="User not found")
 
 @app.get("/admin/generations")
 async def get_last_generations():
@@ -255,14 +324,72 @@ async def get_last_generations():
     
     generations = []
     for f in files:
-        with open(os.path.join(results_dir, f), 'r', encoding='utf-8') as file:
-            data = json.load(file)
-            generations.append({
-                "filename": f,
-                "artist": data.get("artistName"),
-                "timestamp": os.path.getmtime(os.path.join(results_dir, f))
-            })
+        try:
+            with open(os.path.join(results_dir, f), 'r', encoding='utf-8') as file:
+                data = json.load(file)
+                generations.append({
+                    "filename": f,
+                    "artist": data.get("artistName"),
+                })
+        except:
+            continue
     return generations
+
+@app.delete("/admin/users/zero-balance")
+async def delete_zero_balance_users(db: AsyncSession = Depends(get_db)):
+    try:
+        print(f"DEBUG: delete_zero_balance_users called")
+        # Find users with balance 0 who are not admins
+        stmt = select(User).filter(User.balance == 0, User.is_admin == False)
+        result = await db.execute(stmt)
+        users_to_delete = result.scalars().all()
+        
+        print(f"DEBUG: Found {len(users_to_delete)} users to delete")
+        
+        deleted_count = 0
+        for user in users_to_delete:
+            print(f"DEBUG: Deleting user {user.username} (ID: {user.id})")
+            await db.delete(user)
+            deleted_count += 1
+            
+        if deleted_count > 0:
+            await db.commit()
+            print(f"DEBUG: Successfully committed deletion of {deleted_count} users")
+        else:
+            print("DEBUG: No users to delete, skipping commit")
+            
+        return {"status": "success", "deleted_count": deleted_count}
+    except Exception as e:
+        print(f"ERROR in delete_zero_balance_users: {str(e)}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.delete("/admin/users/{user_id}")
+async def delete_user(user_id: int, db: AsyncSession = Depends(get_db)):
+    try:
+        print(f"DEBUG: delete_user called for ID: {user_id}")
+        result = await db.execute(select(User).filter(User.id == user_id))
+        user = result.scalars().first()
+        
+        if not user:
+            print(f"DEBUG: User ID {user_id} not found")
+            raise HTTPException(status_code=404, detail="User not found")
+            
+        if user.is_admin:
+            print(f"DEBUG: Cannot delete admin user {user.username}")
+            raise HTTPException(status_code=403, detail="Cannot delete an admin user")
+            
+        print(f"DEBUG: Deleting user {user.username}")
+        await db.delete(user)
+        await db.commit()
+        print(f"DEBUG: Successfully deleted and committed user {user.username}")
+        return {"status": "success"}
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        print(f"ERROR in delete_user: {str(e)}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/admin/rag/upload")
 async def upload_rag_file(file: UploadFile = File(...)):
