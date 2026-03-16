@@ -9,6 +9,11 @@ import os
 import shutil
 import tempfile
 import uuid
+import requests
+import io
+import PyPDF2
+import docx
+import pandas as pd
 from datetime import timedelta
 
 from database import engine, Base, get_db
@@ -17,6 +22,9 @@ from schemas import UserCreate, UserResponse, Token, TempKnowledge
 from auth_utils import verify_password, get_password_hash, create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
 
 ADMIN_SECRET = "vocalprint_admin_2024" # In a real app, this should be in .env
+
+ALLOWED_RAG_EXTENSIONS = {'.pdf', '.txt', '.csv', '.xls', '.xlsx', '.doc', '.docx', '.rtf', '.md'}
+MAX_RAG_FILE_SIZE = 100 * 1024 * 1024  # 100MB
 
 app = FastAPI()
 
@@ -111,15 +119,49 @@ async def list_knowledge_files():
         knowledge_dir = os.path.join(os.path.dirname(__file__), 'knowledge')
         if not os.path.exists(knowledge_dir):
             return {"files": []}
-        files = [f for f in os.listdir(knowledge_dir) if os.path.isfile(os.path.join(knowledge_dir, f)) and f.endswith('.md')]
+        
+        # Include all supported RAG extensions
+        files = [f for f in os.listdir(knowledge_dir) 
+                 if os.path.isfile(os.path.join(knowledge_dir, f)) 
+                 and any(f.lower().endswith(ext) for ext in ALLOWED_RAG_EXTENSIONS)]
         return {"files": files}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+def parse_pdf(content: bytes) -> str:
+    try:
+        reader = PyPDF2.PdfReader(io.BytesIO(content))
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() + "\n"
+        return text
+    except Exception as e:
+        return f"[Error parsing PDF: {str(e)}]"
+
+def parse_docx(content: bytes) -> str:
+    try:
+        doc = docx.Document(io.BytesIO(content))
+        return "\n".join([para.text for para in doc.paragraphs])
+    except Exception as e:
+        return f"[Error parsing DOCX: {str(e)}]"
+
+def parse_excel(content: bytes) -> str:
+    try:
+        df = pd.read_excel(io.BytesIO(content))
+        return df.to_string()
+    except Exception as e:
+        return f"[Error parsing Excel: {str(e)}]"
+
+def parse_csv(content: bytes) -> str:
+    try:
+        df = pd.read_csv(io.BytesIO(content))
+        return df.to_string()
+    except Exception as e:
+        return f"[Error parsing CSV: {str(e)}]"
+
 @app.get("/knowledge/read/{filename}")
 async def read_knowledge_file(filename: str):
     try:
-        # Prevent directory traversal
         safe_filename = os.path.basename(filename)
         knowledge_dir = os.path.join(os.path.dirname(__file__), 'knowledge')
         content_path = os.path.join(knowledge_dir, safe_filename)
@@ -127,11 +169,49 @@ async def read_knowledge_file(filename: str):
         if not os.path.exists(content_path):
             raise HTTPException(status_code=404, detail="File not found")
             
-        with open(content_path, "r", encoding="utf-8") as f:
-            content = f.read()
+        ext = os.path.splitext(safe_filename)[1].lower()
+        
+        # Check if it's a stub (0 bytes) or if it's a non-MD file that might need fetching
+        is_stub = os.path.getsize(content_path) == 0
+        
+        content = b""
+        if is_stub:
+            # Fetch from n8n
+            read_webhook_url = "http://localhost:5678/webhook/rag-read"
+            try:
+                response = requests.post(read_webhook_url, json={"filename": safe_filename}, timeout=30)
+                response.raise_for_status()
+                content = response.content
+            except Exception as e:
+                print(f"Error fetching from n8n: {e}")
+                # Fallback to local if possible, but it's a stub, so just report error
+                return {"filename": safe_filename, "content": f"[Error: Could not fetch content from Google Drive: {str(e)}]"}
+        else:
+            with open(content_path, "rb") as f:
+                content = f.read()
+
+        # Parse based on extension
+        text_content = ""
+        if ext == '.pdf':
+            text_content = parse_pdf(content)
+        elif ext in ['.docx', '.doc']:
+            text_content = parse_docx(content)
+        elif ext in ['.xlsx', '.xls']:
+            text_content = parse_excel(content)
+        elif ext == '.csv':
+            text_content = parse_csv(content)
+        else:
+            # Default to UTF-8 text (txt, rtf, md)
+            try:
+                text_content = content.decode('utf-8')
+            except UnicodeDecodeError:
+                # Fallback to latin-1 or similar if utf-8 fails
+                text_content = content.decode('latin-1', errors='replace')
             
-        return {"filename": safe_filename, "content": content}
+        return {"filename": safe_filename, "content": text_content}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/knowledge/temp")
@@ -391,17 +471,96 @@ async def delete_user(user_id: int, db: AsyncSession = Depends(get_db)):
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
+# Removed redundant definition
+        
+# @app.delete("/admin/users/{user_id}")
+
+@app.get("/admin/rag/files")
+async def get_rag_files():
+    try:
+        knowledge_dir = os.path.join(os.path.dirname(__file__), 'knowledge')
+        if not os.path.exists(knowledge_dir):
+            return []
+        
+        files = []
+        for f in os.listdir(knowledge_dir):
+            file_path = os.path.join(knowledge_dir, f)
+            if os.path.isfile(file_path):
+                stats = os.stat(file_path)
+                files.append({
+                    "filename": f,
+                    "size": stats.st_size,
+                    "last_modified": stats.st_mtime
+                })
+        
+        # Sort by last modified
+        files.sort(key=lambda x: x['last_modified'], reverse=True)
+        return files
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/admin/rag/upload")
 async def upload_rag_file(file: UploadFile = File(...)):
-    knowledge_dir = os.path.join(os.path.dirname(__file__), 'knowledge')
-    if not os.path.exists(knowledge_dir):
-        os.makedirs(knowledge_dir)
+    try:
+        # 1. Check extension
+        ext = os.path.splitext(file.filename)[1].lower()
+        if ext not in ALLOWED_RAG_EXTENSIONS:
+            allowed_str = ", ".join(ALLOWED_RAG_EXTENSIONS)
+            raise HTTPException(status_code=400, detail=f"Unsupported file type. Allowed: {allowed_str}")
         
-    file_path = os.path.join(knowledge_dir, file.filename)
-    with open(file_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+        # 2. Check size
+        file.file.seek(0, os.SEEK_END)
+        size = file.file.tell()
+        file.file.seek(0)
         
-    return {"status": "success", "filename": file.filename}
+        if size > MAX_RAG_FILE_SIZE:
+            raise HTTPException(status_code=400, detail="File too large. Max 100MB.")
+        if size == 0:
+            raise HTTPException(status_code=400, detail="File is empty.")
+
+        content = await file.read()
+        
+        # 3. Send to n8n Webhook
+        # Using the production endpoint so the user doesn't have to manually click "Listen for test event" each time.
+        # The user just needs to ensure the Workflow is turned "Active" in n8n.
+        webhook_url = "http://localhost:5678/webhook/341a3523-f39e-49a4-b552-6b58fe9f0c49"
+        
+        try:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            
+            def send_webhook():
+                response = requests.post(
+                    webhook_url,
+                    files={"file": (file.filename, content, file.content_type)},
+                    timeout=300
+                )
+                response.raise_for_status()
+                return response
+                
+            await loop.run_in_executor(None, send_webhook)
+            
+        except requests.exceptions.RequestException as req_err:
+            print(f"Error forwarding to n8n webhook: {req_err}")
+            raise HTTPException(status_code=502, detail=f"Failed to upload file to n8n: {req_err}")
+
+        # 4. Save a stub file locally so it shows in the Admin RAG List without taking up space
+        knowledge_dir = os.path.join(os.path.dirname(__file__), 'knowledge')
+        if not os.path.exists(knowledge_dir):
+            os.makedirs(knowledge_dir)
+            
+        file_path = os.path.join(knowledge_dir, file.filename)
+        # Create an empty file with the identical name
+        with open(file_path, "wb") as f:
+            f.write(b"") # Empty stub
+            
+        return {"status": "success", "filename": file.filename, "size": size}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

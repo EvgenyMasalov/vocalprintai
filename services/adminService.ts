@@ -15,6 +15,12 @@ export interface AdminGeneration {
     timestamp: number;
 }
 
+export interface RagFile {
+    filename: string;
+    size: number;
+    last_modified: number;
+}
+
 export const adminService = {
     async getClients(): Promise<AdminClient[]> {
         const token = localStorage.getItem('token');
@@ -65,6 +71,15 @@ export const adminService = {
             body: formData
         });
         if (!response.ok) throw new Error('Failed to upload RAG file');
+        return response.json();
+    },
+
+    async getRagFiles(): Promise<RagFile[]> {
+        const token = localStorage.getItem('token');
+        const response = await fetch(`${API_URL}/admin/rag/files`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!response.ok) throw new Error('Failed to fetch RAG files');
         return response.json();
     }
 };

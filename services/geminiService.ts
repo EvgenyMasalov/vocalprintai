@@ -21,7 +21,7 @@ export class GeminiService {
         type: "function",
         function: {
           name: "list_files",
-          description: "Lists available technical dossiers in the Neural Knowledge Base (e.g., vocal_thesaurus.md, expert_terminology.md). Use this to find specialized vocabulary.",
+          description: "Lists available technical dossiers and documents in the Neural Knowledge Base (supports .md, .pdf, .docx, .xlsx, .csv, .txt). Use this to find specialized vocabulary or artist research.",
           parameters: { type: "object", properties: {} }
         }
       },
@@ -29,13 +29,13 @@ export class GeminiService {
         type: "function",
         function: {
           name: "read_file",
-          description: "Reads the content of a specific technical dossier from the Knowledge Base to extract professional adjectives and technical terms.",
+          description: "Reads the content of a specific document from the Knowledge Base (MD, PDF, DOCX, XLSX, CSV). Returns the extracted text for analysis.",
           parameters: {
             type: "object",
             properties: {
               filename: {
                 type: "string",
-                description: "Name of the file to read (e.g., 'vocal_thesaurus.md').",
+                description: "Name of the file to read (e.g., 'vocal_thesaurus.md', 'artist_research.pdf').",
               },
             },
             required: ["filename"],
@@ -147,8 +147,8 @@ export class GeminiService {
         {
           "artistName": "Имя",
           "vocalRange": { "low": "Нижняя нота", "high": "Верхняя нота", "classification": "Тип голоса" },
-          "techniques": [10 объектов { "name", "description", "prominence": "число от 75 до 100 (только High %)" }],
-          "expertVerdict": "CRITICAL: This must be a long (500+ words) technical technical manuscript. Format it with Markdown headers: ### TIMBRAL PROFILE, ### TECHNICAL DIAGNOSTICS, and ### SEMANTIC TIMELINE. DO NOT LEAVE THIS EMPTY.",
+          "techniques": [10 объектов { "name", "description", "prominence": "75-100" }],
+          "expertVerdict": "### TIMBRAL PROFILE\\n[Technical analysis]\\n\\n### TECHNICAL DIAGNOSTICS\\n[Technical analysis]\\n\\n### SEMANTIC TIMELINE\\n[Technical analysis]. IMPORTANT: Use single quotes (') for internal quotes, NEVER double quotes (\") inside this text.",
           "technicalDiagnostics": {
             "breathControl": { "index": 0-100, "status": "Short description" },
             "compressionFriction": { "index": 0-100, "status": "Short description" },
@@ -347,9 +347,21 @@ export class GeminiService {
                 ${isDeepResearchEnabled ? '### VOCAL FX' : ''} 
                 
                 ВАЖНО: Внутри экспертного заключения (expertVerdict) НЕ используй другие заголовки, кроме этих четырех. Используй только обычный текст и жирный шрифт для акцентов.
+                Текст должен быть МИНИМУМ 500 СЛОВ.
+                
+                ОТВЕТЬ СТРОГО В ЭТОМ ФОРМАТЕ (JSON):
+                {
+                  "artistName": "${artist}",
+                  "vocalRange": { "low": "note", "high": "note", "classification": "type" },
+                  "techniques": [ ...10 объектов... ],
+                  "expertVerdict": "### TIMBRAL PROFILE\\n[long technical text]\\n\\n### TECHNICAL DIAGNOSTICS\\n[long technical text]\\n\\n### SEMANTIC TIMELINE\\n[long technical text]",
+                  "technicalDiagnostics": { ... },
+                  "timbre": { ... }
+                }
+                
                 ВЕСЬ ТЕКСТ НА АНГЛИЙСКОМ.`
         }
-      ];
+       ];
       responseData = await this.callOpenAI(finalPrompt, false);
     }
 
@@ -367,11 +379,50 @@ export class GeminiService {
     console.debug("[Archival Core] Response Content:", content);
 
     try {
-      // More robust JSON cleaning
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error("JSON не найден в ответе ИИ");
+      // Powerful multi-stage JSON extractor & "Sloppy JSON" fixer
+      const parseSloppyJSON = (str: string) => {
+        let clean = str.trim();
+        // 1. Extract the actual JSON block
+        const start = clean.indexOf('{');
+        const end = clean.lastIndexOf('}');
+        if (start === -1 || end === -1 || end < start) return null;
+        clean = clean.substring(start, end + 1);
 
-      const parsed = JSON.parse(jsonMatch[0]) as any;
+        try {
+          return JSON.parse(clean);
+        } catch (e) {
+          console.warn("[Archival Core] Standard JSON.parse failed. Attempting sloppy recovery...", e);
+          
+          // 2. Try to fix common LLM mistakes: unescaped newlines in strings
+          clean = clean.replace(/\n/g, "\\n");
+          // But fix incorrectly escaped brackets/braces that might have been there
+          clean = clean.replace(/\\n\s*([\}\]])/g, "\n$1");
+          
+          try {
+            return JSON.parse(clean);
+          } catch (e2) {
+            console.error("[Archival Core] Sloppy recovery failed. Falling back to Regex extraction.");
+            return null;
+          }
+        }
+      };
+
+      let parsed = parseSloppyJSON(content);
+
+      // REGEX FALLBACK: If JSON is completely broken, salvage the most important parts
+      if (!parsed) {
+        console.info("[Archival Core] Salvaging data via Regex...");
+        const verdictMatch = content.match(/"expertVerdict"\s*:\s*"([\s\S]*?)"(?=\s*[,\}])/i);
+        const artistMatch = content.match(/"artistName"\s*:\s*"([\s\S]*?)"/i);
+        
+        parsed = {
+          artistName: artistMatch ? artistMatch[1] : artist,
+          expertVerdict: verdictMatch ? verdictMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"') : null,
+          techniques: [], // We'll rely on the technique generator below
+          technicalDiagnostics: {},
+          timbre: {}
+        };
+      }
 
       // Robust mapping for vocalRange (nested or flat)
       const vocalRange = parsed.vocalRange || {};

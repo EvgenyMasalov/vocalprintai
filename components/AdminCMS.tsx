@@ -10,12 +10,14 @@ const AdminCMS: React.FC<AdminCMSProps> = ({ onBack }) => {
     const [activeTab, setActiveTab] = useState<'clients' | 'generations' | 'rag'>('clients');
     const [clients, setClients] = useState<AdminClient[]>([]);
     const [generations, setGenerations] = useState<AdminGeneration[]>([]);
+    const [ragFiles, setRagFiles] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
     const [uploadStatus, setUploadStatus] = useState<string>('');
 
     useEffect(() => {
         if (activeTab === 'clients') fetchClients();
         if (activeTab === 'generations') fetchGenerations();
+        if (activeTab === 'rag') fetchRagFiles();
     }, [activeTab]);
 
     const fetchClients = async () => {
@@ -42,16 +44,53 @@ const AdminCMS: React.FC<AdminCMSProps> = ({ onBack }) => {
         }
     };
 
+    const fetchRagFiles = async () => {
+        setLoading(true);
+        try {
+            const data = await adminService.getRagFiles();
+            setRagFiles(data);
+        } catch (error) {
+            console.error(error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
+            const file = e.target.files[0];
+            
+            // Client-side validation
+            const allowedExtensions = ['.pdf', '.txt', '.csv', '.xls', '.xlsx', '.doc', '.docx', '.rtf'];
+            const fileExtension = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+            
+            if (!allowedExtensions.includes(fileExtension)) {
+                setUploadStatus(`Ошибка: Неподдерживаемый тип файла. Разрешены: ${allowedExtensions.join(', ')}`);
+                return;
+            }
+            
+            if (file.size > 100 * 1024 * 1024) {
+                setUploadStatus('Ошибка: Файл слишком большой (макс. 100МБ)');
+                return;
+            }
+
             setUploadStatus('Загрузка...');
             try {
-                await adminService.uploadRagFile(e.target.files[0]);
+                await adminService.uploadRagFile(file);
                 setUploadStatus('Файл успешно загружен в систему RAG');
+                fetchRagFiles();
             } catch (error) {
                 setUploadStatus('Ошибка загрузки');
             }
         }
+    };
+
+    const formatFileSize = (bytes: number) => {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     };
 
     return (
@@ -195,21 +234,57 @@ const AdminCMS: React.FC<AdminCMSProps> = ({ onBack }) => {
                 )}
 
                 {activeTab === 'rag' && (
-                    <div className="max-w-xl space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                        <h3 className="text-[10px] font-black uppercase tracking-[0.5em] text-pink-500/40">Управление Базой Знаний (RAG)</h3>
-                        <div className="baroque-panel p-10 space-y-6">
-                            <p className="text-sm italic text-pink-100/60 leading-relaxed">
-                                Загрузите новые материалы для обучения системы. Файлы будут проиндексированы и использованы при генерации вокальных манускриптов.
-                            </p>
+                    <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        <div className="flex justify-between items-center">
+                            <h3 className="text-[10px] font-black uppercase tracking-[0.5em] text-pink-500/40">Управление Базой Знаний (RAG)</h3>
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+                            <div className="baroque-panel p-8 space-y-6">
+                                <h4 className="text-[10px] font-black uppercase tracking-widest text-pink-500/60">Загрузить материал</h4>
+                                <p className="text-xs italic text-pink-100/60 leading-relaxed">
+                                    Поддерживаются форматы: PDF, TXT, CSV, XLS, DOCX, RTF. Максимальный размер: 100МБ.
+                                </p>
+                                <div className="space-y-4">
+                                    <label className="flex flex-col items-center justify-center w-full h-32 px-4 transition bg-black/40 border-2 border-pink-500/10 border-dashed rounded-md appearance-none cursor-pointer hover:border-pink-500/40 focus:outline-none">
+                                        <Upload className="w-8 h-8 text-pink-500/40 mb-2" />
+                                        <span className="font-serif italic text-pink-100/40">Нажмите для выбора файла</span>
+                                        <input type="file" className="hidden" onChange={handleFileUpload} />
+                                    </label>
+                                    {uploadStatus && (
+                                        <div className="text-[10px] uppercase font-black tracking-widest text-center text-pink-500 animate-pulse">
+                                            {uploadStatus}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
                             <div className="space-y-4">
-                                <label className="flex flex-col items-center justify-center w-full h-32 px-4 transition bg-black/40 border-2 border-pink-500/10 border-dashed rounded-md appearance-none cursor-pointer hover:border-pink-500/40 focus:outline-none">
-                                    <Upload className="w-8 h-8 text-pink-500/40 mb-2" />
-                                    <span className="font-serif italic text-pink-100/40">Нажмите для выбора файла</span>
-                                    <input type="file" className="hidden" onChange={handleFileUpload} />
-                                </label>
-                                {uploadStatus && (
-                                    <div className="text-[10px] uppercase font-black tracking-widest text-center text-pink-500 animate-pulse">
-                                        {uploadStatus}
+                                <h4 className="text-[10px] font-black uppercase tracking-widest text-pink-500/60">Список файлов ({ragFiles.length})</h4>
+                                {loading && ragFiles.length === 0 ? (
+                                    <p className="italic text-pink-500/40">Загрузка файлов...</p>
+                                ) : (
+                                    <div className="grid gap-3">
+                                        {ragFiles.length === 0 && <p className="text-xs italic text-pink-500/30">Файлы не найдены</p>}
+                                        {ragFiles.map((file, idx) => (
+                                            <div key={idx} className="p-4 border border-pink-500/10 bg-pink-500/5 flex items-center justify-between group hover:border-pink-500/40 transition-all">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-8 h-8 border border-pink-500/20 flex items-center justify-center bg-black">
+                                                        <FileText size={14} className="text-pink-500/60" />
+                                                    </div>
+                                                    <div className="overflow-hidden">
+                                                        <div className="text-sm italic font-serif text-white truncate max-w-[200px]" title={file.filename}>{file.filename}</div>
+                                                        <div className="text-[9px] uppercase text-pink-500/40">{formatFileSize(file.size)}</div>
+                                                    </div>
+                                                </div>
+                                                <div className="text-right">
+                                                    <div className="text-[9px] uppercase tracking-widest text-pink-500/30">Изменен</div>
+                                                    <div className="text-[10px] font-mono text-pink-500/60">
+                                                        {new Date(file.last_modified * 1000).toLocaleDateString()}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
                                     </div>
                                 )}
                             </div>
