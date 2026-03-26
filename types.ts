@@ -82,6 +82,8 @@ export interface VocalAnalysis {
     title: string;
     uri: string;
   }>;
+  tempo?: number;
+  key?: string;
 }
 
 export interface AnalysisState {

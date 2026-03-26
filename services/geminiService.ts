@@ -180,7 +180,9 @@ export class GeminiService {
               "profound": 0-100, 
               "compressed": 0-100 
             } 
-          }
+          },
+          "tempo": 0.0,
+          "key": "C Major"
         }
 
         РЕЖИМ [SPECTRAL ANALYSIS]: (Есть Файл/URL/Текст).
@@ -396,7 +398,9 @@ export class GeminiService {
                   "techniques": [ ...10 объектов... ],
                   "expertVerdict": "### TIMBRAL PROFILE\\n[long technical text]\\n\\n### TECHNICAL DIAGNOSTICS\\n[long technical text]\\n\\n### SEMANTIC TIMELINE\\n[long technical text]",
                   "technicalDiagnostics": { ... },
-                  "timbre": { ... }
+                  "timbre": { ... },
+                  "tempo": 0.0,
+                  "key": "note"
                 }
                 
                 ВЕСЬ ТЕКСТ НА АНГЛИЙСКОМ.`
@@ -505,7 +509,9 @@ export class GeminiService {
         groundingSources: [{ title: isCoreOnly ? "Archival Knowledge" : "Librosa Spectral Engine", uri: "https://polza.ai" }],
         expertVerdict: expertVerdict,
         techniques: Array.isArray(parsed.techniques) ? parsed.techniques : [],
-        vocalSemanticMapping: Array.isArray(parsed.vocalSemanticMapping) ? parsed.vocalSemanticMapping : []
+        vocalSemanticMapping: Array.isArray(parsed.vocalSemanticMapping) ? parsed.vocalSemanticMapping : [],
+        tempo: parsed.tempo,
+        key: parsed.key
       };
 
       // Surgical fallback for radar metrics
