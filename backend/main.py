@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, status
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, status, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +15,14 @@ import PyPDF2
 import docx
 import pandas as pd
 from datetime import timedelta
+import logging
+
+try:
+    from music_parser import MusicMetadataParser
+    MUSIC_PARSER_AVAILABLE = True
+except Exception as e:
+    MUSIC_PARSER_AVAILABLE = False
+    print(f"[Warning] MusicMetadataParser initialization failed: {e}")
 
 from database import engine, Base, get_db
 from models import User
@@ -254,16 +262,23 @@ async def delete_temp_knowledge(filename: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/save_result")
-async def save_result(data: dict, db: AsyncSession = Depends(get_db)):
+async def save_result(request: Request, db: AsyncSession = Depends(get_db)): # Modified signature
     try:
         # Create results directory if it doesn't exist
         results_dir = os.path.join(os.path.dirname(__file__), 'results')
         if not os.path.exists(results_dir):
             os.makedirs(results_dir)
             
-        artist_name = data.get("artistName", "Unknown_Artist")
-        # Sanitize filename for Windows: remove < > : " / \ | ? *
+        data = await request.json() # Added this line
+        artist_input = data.get("artistName", "Unknown_Artist")
+        
+        # Parse artist name for clean storage
+        from utils import parse_artist_name # Added this import
+        parsed = parse_artist_name(artist_input)
+        artist_name = parsed["safe_filename"]
+        
         import re
+        # Final cleanup for Windows just in case
         artist_name = re.sub(r'[<>:"/\\|?*]', '', artist_name).replace(" ", "_")
         if not artist_name: artist_name = "Unknown_Artist"
         
@@ -293,6 +308,51 @@ async def save_result(data: dict, db: AsyncSession = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+def process_audio(file_path: str):
+    """Core Spectral Analysis Pipeline using Librosa"""
+    y, sr = librosa.load(file_path, sr=22050)
+    
+    # 1. Spectral Analysis Pipeline
+    mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+    mfcc_mean = np.mean(mfccs, axis=1).tolist()
+    
+    centroid = librosa.feature.spectral_centroid(y=y, sr=sr)
+    centroid_mean = float(np.mean(centroid))
+    
+    # Use yin instead of pyin for speed
+    f0 = librosa.yin(y, fmin=librosa.note_to_hz('C2'), fmax=librosa.note_to_hz('C7'), sr=sr)
+    f0_clean = f0[~np.isnan(f0)]
+    f0_stability = float(np.std(f0_clean)) if len(f0_clean) > 0 else 0.0
+    
+    zcr = librosa.feature.zero_crossing_rate(y)
+    zcr_mean = float(np.mean(zcr))
+    
+    rolloff = librosa.feature.spectral_rolloff(y=y, sr=sr)
+    rolloff_mean = float(np.mean(rolloff))
+    
+    contrast = librosa.feature.spectral_contrast(y=y, sr=sr)
+    contrast_mean = np.mean(contrast, axis=1).tolist()
+
+    # 2. Beat & Tempo Analysis
+    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+    tempo_val = float(tempo[0]) if hasattr(tempo, "__len__") else float(tempo)
+
+    # 3. Key Detection (New)
+    from utils import estimate_key
+    detected_key = estimate_key(y, sr)
+
+    return {
+        "mfcc": mfcc_mean,
+        "f0_stability": f0_stability,
+        "spectral_centroid": centroid_mean,
+        "zero_crossing_rate": zcr_mean,
+        "spectral_rolloff": rolloff_mean,
+        "spectral_contrast": contrast_mean,
+        "tempo": tempo_val,
+        "key": detected_key,
+        "duration": float(librosa.get_duration(y=y, sr=sr))
+    }
+
 @app.post("/analyze")
 async def analyze_audio(file: UploadFile = File(...)):
     try:
@@ -309,41 +369,12 @@ async def analyze_audio(file: UploadFile = File(...)):
             tmp_path = tmp.name
 
         # Ensure file is closed before librosa loads it
-        y, sr = librosa.load(tmp_path, sr=22050)
+        metrics = process_audio(tmp_path)
         
-        # Spectral Analysis Pipeline
-        mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
-        mfcc_mean = np.mean(mfccs, axis=1).tolist()
-        
-        centroid = librosa.feature.spectral_centroid(y=y, sr=sr)
-        centroid_mean = float(np.mean(centroid))
-        
-        # Use yin instead of pyin for speed
-        f0 = librosa.yin(y, fmin=librosa.note_to_hz('C2'), fmax=librosa.note_to_hz('C7'), sr=sr)
-        f0_clean = f0[~np.isnan(f0)]
-        f0_stability = float(np.std(f0_clean)) if len(f0_clean) > 0 else 0.0
-        
-        zcr = librosa.feature.zero_crossing_rate(y)
-        zcr_mean = float(np.mean(zcr))
-        
-        rolloff = librosa.feature.spectral_rolloff(y=y, sr=sr)
-        rolloff_mean = float(np.mean(rolloff))
-        
-        contrast = librosa.feature.spectral_contrast(y=y, sr=sr)
-        contrast_mean = np.mean(contrast, axis=1).tolist()
-
         return {
             "status": "success",
             "filename": file.filename,
-            "metrics": {
-                "mfcc": mfcc_mean,
-                "f0_stability": f0_stability,
-                "spectral_centroid": centroid_mean,
-                "zero_crossing_rate": zcr_mean,
-                "spectral_rolloff": rolloff_mean,
-                "spectral_contrast": contrast_mean,
-                "duration": float(librosa.get_duration(y=y, sr=sr))
-            }
+            "metrics": metrics
         }
     except Exception as e:
         if isinstance(e, HTTPException):
@@ -361,6 +392,90 @@ async def analyze_audio(file: UploadFile = File(...)):
                     os.remove(tmp_path)
                 except:
                     pass
+
+from pydantic import BaseModel
+class AnalyzeUrlRequest(BaseModel):
+    url: str
+
+@app.post("/analyze_url")
+async def analyze_url(req: AnalyzeUrlRequest, background_tasks: BackgroundTasks):
+    from yandex_analyzer.yandex_client import YandexMusicClient
+    from yandex_analyzer.downloader import AudioDownloader
+    from yandex_analyzer.converter import AudioConverter
+    
+    url = req.url
+    yandex_client = YandexMusicClient()
+    downloader = AudioDownloader()
+    converter = AudioConverter(ffmpeg_path=r"C:\ffmpeg-8.1-full_build\bin\ffmpeg.exe")
+    
+    # 1. Parse Music Link
+    artist, track_title = None, None
+    
+    # Try Yandex client first if it's a Yandex URL
+    if "music.yandex" in url:
+        artist, track_title = yandex_client.parse_url(url)
+    
+    # Fallback to Universal Parser (which now includes YT-DLP) if Yandex failed or it's a different service
+    if not artist or not track_title:
+        if MUSIC_PARSER_AVAILABLE:
+            parser = MusicMetadataParser()
+            artist, track_title = parser.get_metadata(url)
+            if artist and track_title:
+                print(f"[Main] Extracted metadata via Universal Parser: {artist} - {track_title}")
+    
+    if not (artist and track_title):
+        raise HTTPException(
+            status_code=400, 
+            detail="Could not extract track info from the provided URL. Make sure it's a direct song/track link."
+        )
+
+    print(f"[Main] Proceeding with search and analysis for: {artist} - {track_title}")
+
+    download_path = None
+    wav_path = None
+
+    def cleanup_files(*paths):
+        for path in paths:
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except Exception as e:
+                    print(f"Error cleaning up {path}: {e}")
+
+    try:
+        # 2. Search and Download
+        # Use parse_artist_name to ensure best search results (e.g. Freddie Mercury Queen)
+        from utils import parse_artist_name
+        parsed = parse_artist_name(artist)
+        search_artist = parsed["search_query"]
+        
+        download_path = downloader.download_by_search(search_artist, track_title)
+        if not download_path:
+            raise HTTPException(status_code=404, detail="Failed to download audio from alternative sources")
+
+        # 3. Convert to WAV
+        wav_path = converter.convert_to_wav(download_path)
+        if not wav_path:
+            raise HTTPException(status_code=500, detail="Failed to convert audio to WAV")
+
+        # 4. Analyze with Librosa
+        metrics = process_audio(wav_path)
+        
+        # Schedule cleanup
+        background_tasks.add_task(cleanup_files, download_path, wav_path)
+
+        return {
+            "status": "success",
+            "artist": artist,
+            "track": track_title,
+            "metrics": metrics
+        }
+
+    except Exception as e:
+        cleanup_files(download_path, wav_path)
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/admin/clients", response_model=list[UserResponse])
 async def get_clients(db: AsyncSession = Depends(get_db)):

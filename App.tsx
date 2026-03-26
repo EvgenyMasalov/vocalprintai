@@ -214,6 +214,17 @@ const App: React.FC = () => {
             </div>
 
             <div className="space-y-4">
+              <label className="text-[10px] font-black uppercase tracking-[0.3em] text-pink-500/60">Или вставьте ссылку на Yandex Music</label>
+              <input
+                type="text"
+                value={referenceUrl}
+                onChange={(e) => setReferenceUrl(e.target.value)}
+                placeholder="https://music.yandex.ru/album/..."
+                className="w-full bg-black/50 border border-pink-500/20 p-4 text-white focus:outline-none focus:border-pink-500 transition-colors font-serif italic"
+              />
+            </div>
+
+            <div className="space-y-4">
               <label className="text-[10px] font-black uppercase tracking-[0.3em] text-pink-500/60">Структура песни / Текст</label>
               <textarea
                 value={songStructure}

@@ -5,11 +5,24 @@ title VocalPrint AI Launcher
 
 echo ============================================
 echo    VocalPrint AI - Application Launcher
-echo ============================================
 echo.
+echo ============================================
+echo [0/5] Checking Docker PostgreSQL container (postgres_db)...
+docker ps --filter "name=postgres_db" --filter "status=running" | findstr "postgres_db" >nul
+if errorlevel 1 (
+    echo [!] postgres_db is not running. Attempting to start...
+    docker start postgres_db >nul 2>&1
+    if errorlevel 1 (
+        echo [!] WARNING: Could not start postgres_db. Vector search may not work.
+    ) else (
+        echo [OK] postgres_db started.
+    )
+) else (
+    echo [OK] postgres_db is running.
+)
 
-:: --- [0/4] Cleanup zombie processes ------------------------------------------
-echo [0/4] Cleaning up existing processes on ports 8500 and 8081...
+:: --- [1/5] Cleanup zombie processes ------------------------------------------
+echo [1/5] Cleaning up existing processes on ports 8500 and 8081...
 
 :: kill by port
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8500 ^| findstr LISTENING') do taskkill /F /PID %%a >nul 2>&1
@@ -19,8 +32,8 @@ for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8081 ^| findstr LISTENING') 
 taskkill /F /IM node.exe /FI "WINDOWTITLE eq VocalPrint Frontend*" >nul 2>&1
 taskkill /F /IM python.exe /FI "WINDOWTITLE eq VocalPrint Backend*" >nul 2>&1
 
-:: --- [1/4] Checking dependencies -------------------------------------------
-echo [1/4] Checking dependencies...
+:: --- [2/5] Checking dependencies -------------------------------------------
+echo [2/5] Checking dependencies...
 
 :: Frontend check
 if not exist "node_modules" (
@@ -43,11 +56,11 @@ if errorlevel 1 (
 )
 
 echo.
-echo [2/4] Starting Backend (FastAPI)...
+echo [3/5] Starting Backend (FastAPI)...
 start "VocalPrint Backend" /min cmd /c "chcp 65001 >nul && call venv\Scripts\activate.bat && python main.py"
 
-:: --- [3/4] Wait for backend ------------------------------------------------
-echo [3/4] Waiting for backend (Librosa warmup)...
+:: --- [4/5] Wait for backend ------------------------------------------------
+echo [4/5] Waiting for backend (Librosa warmup)...
 set /a attempts=0
 :WAIT_BACKEND
 set /a attempts+=1
@@ -63,10 +76,10 @@ if errorlevel 1 (
 )
 echo [OK] Backend ready!
 
-:: --- [4/4] Starting Frontend -----------------------------------------------
+:: --- [5/5] Starting Frontend -----------------------------------------------
 :START_FRONTEND
 echo.
-echo [4/4] Starting Frontend (Vite)...
+echo [5/5] Starting Frontend (Vite)...
 cd /d "%~dp0"
 start "VocalPrint Frontend" /min cmd /c "chcp 65001 >nul && npm run dev"
 

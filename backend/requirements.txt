@@ -11,3 +11,8 @@ passlib[bcrypt]
 python-jose[cryptography]
 python-dotenv
 email-validator
+beautifulsoup4
+lxml
+psycopg2-binary
+pgvector
+asyncpg

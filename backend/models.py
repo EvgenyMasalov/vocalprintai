@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean
+from pgvector.sqlalchemy import Vector
 from datetime import datetime
 from database import Base
 
@@ -17,3 +18,12 @@ class User(Base):
     deep_research_count = Column(Integer, default=0)
     replenishment_total = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class KeyProfile(Base):
+    __tablename__ = "key_profiles"
+
+    id = Column(Integer, primary_key=True)
+    key_name = Column(String, unique=True, nullable=False)
+    note = Column(String, nullable=False)
+    mode = Column(String, nullable=False)
+    profile_vector = Column(Vector(12), nullable=False)

@@ -46,7 +46,7 @@ export class GeminiService {
         type: "function",
         function: {
           name: "analyze_audio",
-          description: "Analyzes the uploaded audio file using Librosa to extract spectral metrics (MFCC, centroid, etc.). Use this tool whenever an audio file is provided in SPECTRAL mode.",
+          description: "Analyzes the provided audio source (direct file or URL) using Librosa to extract spectral metrics (MFCC, centroid, etc.). Use this tool whenever an audio source is provided in SPECTRAL mode.",
           parameters: {
             type: "object",
             properties: {
@@ -54,8 +54,13 @@ export class GeminiService {
                 type: "string",
                 description: "The name of the artist being analyzed.",
               },
+              source_type: {
+                type: "string",
+                enum: ["file", "url"],
+                description: "The type of audio source being analyzed."
+              }
             },
-            required: ["artist"],
+            required: ["artist", "source_type"],
           }
         }
       }
@@ -148,7 +153,7 @@ export class GeminiService {
           "artistName": "Имя",
           "vocalRange": { "low": "Нижняя нота", "high": "Верхняя нота", "classification": "Тип голоса" },
           "techniques": [10 объектов { "name", "description", "prominence": "75-100" }],
-          "expertVerdict": "### TIMBRAL PROFILE\\n[Technical analysis]\\n\\n### TECHNICAL DIAGNOSTICS\\n[Technical analysis]\\n\\n### SEMANTIC TIMELINE\\n[Technical analysis]. IMPORTANT: Use single quotes (') for internal quotes, NEVER double quotes (\") inside this text.",
+          "expertVerdict": "### TIMBRAL PROFILE\\n[Artist background 2-3 sentences: nationality, groups, projects. Then technical analysis]\\n\\n### TECHNICAL DIAGNOSTICS\\n[Technical analysis]\\n\\n### SEMANTIC TIMELINE\\n[Technical analysis]. IMPORTANT: Use single quotes (') for internal quotes, NEVER double quotes (\") inside this text.",
           "technicalDiagnostics": {
             "breathControl": { "index": 0-100, "status": "Short description" },
             "compressionFriction": { "index": 0-100, "status": "Short description" },
@@ -180,12 +185,14 @@ export class GeminiService {
 
         РЕЖИМ [SPECTRAL ANALYSIS]: (Есть Файл/URL/Текст).
         ОБЯЗАТЕЛЬНО: 
-        1. ЕСЛИ ПРЕДОСТАВЛЕН АУДИОФАЙЛ, ТЫ ДОЛЖЕН СНАЧАЛА ВЫЗВАТЬ ИНСТРУМЕНТ 'analyze_audio', ЧТОБЫ ПОЛУЧИТЬ СПЕКТРАЛЬНЫЕ МЕТРИКИ (MFCC, Форманты).
-        2. ИСПОЛЬЗУЙ ПОЛУЧЕННЫЕ ДАННЫЕ ДЛЯ ЗАПОЛНЕНИЯ radarMetrics И ТЕХНИЧЕСКОГО АНАЛИЗА.
+        1. ЕСЛИ ПРЕДОСТАВЛЕН АУДИОФАЙЛ, ТЫ ДОЛЖЕН СНАЧАЛА ВЫЗВАТЬ ИНСТРУМЕНТ 'analyze_audio', ЧТОБЫ ПОЛУЧИТЬ СПЕКТРАЛЬНЫЕ МЕТРИКИ (MFCC, Форманты, TEMPO, KEY).
+        2. ИСПОЛЬЗУЙ ПОЛУЧЕННЫЕ ДАННЫЕ (включая TEMPO/BPM и KEY/TONALITY) ДЛЯ ЗАПОЛНЕНИЯ radarMetrics И ТЕХНИЧЕСКОГО АНАЛИЗА.
+        3. KEY/TONALITY ВАЖНА ДЛЯ АНАЛИЗА ТЕССИТУРЫ АРТИСТА (например, как он справляется с высокими нотами в этой конкретной тональности).
         3. JSON формат, 10 характеристик.
         4. ВЕСЬ ТЕКСТ НА АНГЛИЙСКОМ (ENGLISH ONLY).
         5. Поле 'expertVerdict' ДОЛЖНО быть разделено на секции используя Markdown заголовки:
           ### TIMBRAL PROFILE
+          (Start this section with 2-3 sentences about the artist's background: nationality, groups, key projects).
           ### TECHNICAL DIAGNOSTICS
           ### SEMANTIC TIMELINE
           ${isDeepResearchEnabled ? '### VOCAL FX (Используй данные из Deep Research файла)' : ''}
@@ -219,7 +226,7 @@ export class GeminiService {
             web_search: true, // Specific Polza AI flag based on interface
             messages: [{
               role: "user",
-              content: `Search the internet for the top 10 primary vocal characteristics and most common vocal processing techniques (Vocal FX) used by the artist ${artist}. Provide a detailed Markdown summary in English.`
+              content: `Search for artist '${artist}': 1. Nationality, groups, major projects (2-3 sentences for identification). 2. Top 10 vocal characteristics and common Vocal FX. Provide Markdown summary in English.`
             }],
           })
         });
@@ -273,32 +280,65 @@ export class GeminiService {
 
           if (name === 'analyze_audio') {
             onProgress?.("Обработка аудио через Python-ядро...");
-            if (!audioFile) {
-              result = { error: "No audio file uploaded to analyze." };
-            } else {
-              console.info(`[Real Librosa] Sending ${audioFile.name} (${audioFile.size} bytes) to backend...`);
-              try {
-                const formData = new FormData();
-                formData.append('file', audioFile);
+            const sourceType = args.source_type;
 
-                const startTime = Date.now();
-                const librosaResponse = await fetch('/api/analyze', {
-                  method: 'POST',
-                  body: formData
-                });
+            if (sourceType === 'url') {
+              if (!referenceUrl) {
+                result = { error: "No URL provided for analysis." };
+              } else {
+                console.info(`[Real Librosa] Sending URL ${referenceUrl} to backend...`);
+                try {
+                  const librosaResponse = await fetch('/api/analyze_url', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: referenceUrl })
+                  });
 
-                if (librosaResponse.ok) {
-                  const spectralData = await librosaResponse.json();
-                  console.info(`[Real Librosa] Success in ${Date.now() - startTime}ms:`, spectralData);
-                  result = { content: `REAL LIBROSA DATA for ${artist}: ` + JSON.stringify(spectralData.metrics) };
-                } else {
-                  const errorText = await librosaResponse.text();
-                  console.error("[Real Librosa] Backend error:", librosaResponse.status, errorText);
-                  result = { error: `Local backend error: ${librosaResponse.status}` };
+                  if (librosaResponse.ok) {
+                    const spectralData = await librosaResponse.json();
+                    console.info(`[Real Librosa] URL Success:`, spectralData);
+                    result = { 
+                      content: `REAL LIBROSA DATA (from URL: ${referenceUrl}) for ${spectralData.artist} - ${spectralData.track}: ` + JSON.stringify(spectralData.metrics) 
+                    };
+                  } else {
+                    const errorText = await librosaResponse.text();
+                    console.error("[Real Librosa] URL Backend error:", librosaResponse.status, errorText);
+                    result = { error: `URL analysis backend error: ${librosaResponse.status}` };
+                  }
+                } catch (e) {
+                  console.error("[Librosa Engine] URL CONNECTION FAILED.", e);
+                  result = { error: "Не удалось подключиться к спектральному ядру Librosa для анализа ссылки." };
                 }
-              } catch (e) {
-                console.error("[Librosa Engine] CONNECTION FAILED. Ensure 'python backend/main.py' is running on port 8500.", e);
-                result = { error: "Не удалось подключиться к спектральному ядру Librosa. Убедитесь, что бэкенд запущен." };
+              }
+            } else {
+              // File analysis
+              if (!audioFile) {
+                result = { error: "No audio file uploaded to analyze." };
+              } else {
+                console.info(`[Real Librosa] Sending ${audioFile.name} (${audioFile.size} bytes) to backend...`);
+                try {
+                  const formData = new FormData();
+                  formData.append('file', audioFile);
+
+                  const startTime = Date.now();
+                  const librosaResponse = await fetch('/api/analyze', {
+                    method: 'POST',
+                    body: formData
+                  });
+
+                  if (librosaResponse.ok) {
+                    const spectralData = await librosaResponse.json();
+                    console.info(`[Real Librosa] Success in ${Date.now() - startTime}ms:`, spectralData);
+                    result = { content: `REAL LIBROSA DATA for ${artist}: ` + JSON.stringify(spectralData.metrics) };
+                  } else {
+                    const errorText = await librosaResponse.text();
+                    console.error("[Real Librosa] Backend error:", librosaResponse.status, errorText);
+                    result = { error: `Local backend error: ${librosaResponse.status}` };
+                  }
+                } catch (e) {
+                  console.error("[Librosa Engine] CONNECTION FAILED. Ensure 'python backend/main.py' is running on port 8500.", e);
+                  result = { error: "Не удалось подключиться к спектральному ядру Librosa. Убедитесь, что бэкенд запущен." };
+                }
               }
             }
           } else if (name === 'list_files') {
@@ -347,7 +387,7 @@ export class GeminiService {
                 ${isDeepResearchEnabled ? '### VOCAL FX' : ''} 
                 
                 ВАЖНО: Внутри экспертного заключения (expertVerdict) НЕ используй другие заголовки, кроме этих четырех. Используй только обычный текст и жирный шрифт для акцентов.
-                Текст должен быть МИНИМУМ 500 СЛОВ.
+                Текст должен быть МИНИМУМ 300 СЛОВ.
                 
                 ОТВЕТЬ СТРОГО В ЭТОМ ФОРМАТЕ (JSON):
                 {

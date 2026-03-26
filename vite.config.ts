@@ -16,7 +16,7 @@ export default defineConfig(({ mode }) => {
           rewrite: (path) => path.replace(/^\/api-proxy/, '')
         },
         '/api': {
-          target: 'http://localhost:8500',
+          target: 'http://127.0.0.1:8500',
           changeOrigin: true,
           secure: false,
           rewrite: (path) => path.replace(/^\/api/, '')
