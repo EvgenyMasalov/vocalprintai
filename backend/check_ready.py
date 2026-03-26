@@ -54,6 +54,48 @@ def check_dependencies():
     except Exception as e:
         errors.append(f"sqlalchemy: {e}")
         print(f"[check] FAIL sqlalchemy: {e}", flush=True)
+    print("[check] Checking docx (python-docx)...", flush=True)
+    try:
+        import docx
+        print("[check] OK docx", flush=True)
+    except Exception as e:
+        errors.append(f"python-docx: {e}")
+        print(f"[check] FAIL docx: {e}", flush=True)
+
+    print("[check] Checking PyPDF2...", flush=True)
+    try:
+        import PyPDF2
+        print("[check] OK PyPDF2", flush=True)
+    except Exception as e:
+        errors.append(f"PyPDF2: {e}")
+        print(f"[check] FAIL PyPDF2: {e}", flush=True)
+
+    print("[check] Checking pandas/openpyxl...", flush=True)
+    try:
+        import pandas
+        import openpyxl
+        print("[check] OK pandas", flush=True)
+    except Exception as e:
+        errors.append(f"pandas: {e}")
+        print(f"[check] FAIL pandas: {e}", flush=True)
+
+    print("[check] Checking requests...", flush=True)
+    try:
+        import requests
+        print("[check] OK requests", flush=True)
+    except Exception as e:
+        errors.append(f"requests: {e}")
+        print(f"[check] FAIL requests: {e}", flush=True)
+
+    print("[check] Checking PostgreSQL-related...", flush=True)
+    try:
+        import psycopg2
+        import pgvector
+        import asyncpg
+        print("[check] OK PostgreSQL-related", flush=True)
+    except Exception as e:
+        errors.append(f"psycopg2/pgvector/asyncpg: {e}")
+        print(f"[check] FAIL PostgreSQL-related: {e}", flush=True)
 
     if errors:
         print("\n[check] === ERRORS ===", flush=True)

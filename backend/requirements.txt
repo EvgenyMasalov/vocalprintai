@@ -16,3 +16,8 @@ lxml
 psycopg2-binary
 pgvector
 asyncpg
+PyPDF2
+python-docx
+pandas
+requests
+openpyxl
