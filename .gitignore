@@ -31,6 +31,8 @@ backend/test_*.py
 backend/simple_test.py
 backend/check_*.py
 !backend/check_ready.py
+!backend/test_key_detection.py
+!backend/test_unified_flow.py
 
 # Editor directories and files
 .vscode/*
