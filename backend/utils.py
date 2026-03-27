@@ -1,5 +1,5 @@
 import re
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 def parse_artist_name(name_str: str) -> Dict[str, Optional[str]]:
     """
@@ -116,8 +116,95 @@ def estimate_key(y, sr):
     else:
         return f"{key_names[best_minor_idx]} Minor"
 
+def detect_feat_collaboration(track_title: str, artist: str = "") -> Dict[str, Optional[str]]:
+    """
+    Определяет наличие feat/ft./featuring/& в названии трека или артисте.
+    Это триггер для запуска разделения вокала (Demucs + F0 классификация).
+    
+    Паттерны:
+    - "Song feat. Artist2"
+    - "Song ft. Artist2"  
+    - "Song (feat. Artist2)"
+    - "Song featuring Artist2"
+    - "Artist1 & Artist2 - Song"
+    - "Artist1 x Artist2"
+    - "Artist1, Artist2"
+    
+    Args:
+        track_title: Название трека.
+        artist: Строка с артистом(ами).
+        
+    Returns:
+        {
+            "is_feat": bool,
+            "primary_artist": str | None,
+            "featured_artists": list[str],
+            "clean_title": str,  # Название без feat-части
+            "trigger": str | None,  # Какой паттерн сработал
+        }
+    """
+    combined = f"{artist} {track_title}".strip()
+    is_feat = False
+    featured_artists: List[str] = []
+    clean_title = track_title.strip()
+    trigger = None
+    primary_artist = artist.strip() if artist else None
+
+    # Паттерн 1: feat./ft./featuring в названии трека
+    feat_pattern = re.compile(
+        r'[\(\[\s]*(feat\.?|ft\.?|featuring)\s+(.+?)[\)\]\s]*$',
+        re.IGNORECASE
+    )
+    match = feat_pattern.search(track_title)
+    if match:
+        is_feat = True
+        trigger = match.group(1).lower()
+        feat_part = match.group(2).strip().rstrip(')')
+        # Разделяем нескольких featured артистов
+        featured_artists = [a.strip() for a in re.split(r'[,&]', feat_part) if a.strip()]
+        # Убираем feat-часть из названия
+        clean_title = track_title[:match.start()].strip()
+
+    # Паттерн 2: feat./ft./featuring в строке артиста
+    if not is_feat and artist:
+        match_artist = feat_pattern.search(artist)
+        if match_artist:
+            is_feat = True
+            trigger = match_artist.group(1).lower()
+            feat_part = match_artist.group(2).strip().rstrip(')')
+            featured_artists = [a.strip() for a in re.split(r'[,&]', feat_part) if a.strip()]
+            primary_artist = artist[:match_artist.start()].strip()
+
+    # Паттерн 3: "&" или "x" между артистами (Artist1 & Artist2)
+    if not is_feat and artist:
+        collab_pattern = re.compile(r'^(.+?)\s*(?:&|×|x|X|\+)\s*(.+)$')
+        match_collab = collab_pattern.match(artist)
+        if match_collab:
+            is_feat = True
+            trigger = "&"
+            primary_artist = match_collab.group(1).strip()
+            featured_artists = [a.strip() for a in re.split(r'[,&×xX\+]', match_collab.group(2)) if a.strip()]
+
+    # Паттерн 4: Запятая в артисте (Artist1, Artist2, Artist3)
+    if not is_feat and artist and ',' in artist:
+        parts = [a.strip() for a in artist.split(',') if a.strip()]
+        if len(parts) >= 2:
+            is_feat = True
+            trigger = ","
+            primary_artist = parts[0]
+            featured_artists = parts[1:]
+
+    return {
+        "is_feat": is_feat,
+        "primary_artist": primary_artist,
+        "featured_artists": featured_artists,
+        "clean_title": clean_title,
+        "trigger": trigger,
+    }
+
+
 if __name__ == "__main__":
-    # Tests
+    # Tests — parse_artist_name
     test_cases = [
         "Freddie Mercury (Queen)",
         "Queen (Freddie Mercury)",
@@ -127,3 +214,19 @@ if __name__ == "__main__":
     ]
     for tc in test_cases:
         print(f"Input: {tc} -> {parse_artist_name(tc)}")
+
+    # Tests — detect_feat_collaboration
+    print("\n--- Feat Detection Tests ---")
+    feat_tests = [
+        ("Flowers", "Miley Cyrus"),
+        ("Under Pressure", "Queen & David Bowie"),
+        ("HUMBLE. feat. Rihanna", "Kendrick Lamar"),
+        ("Beautiful Liar", "Beyoncé, Shakira"),
+        ("Señorita (ft. Camila Cabello)", "Shawn Mendes"),
+        ("Lady Marmalade (feat. Christina Aguilera, Lil' Kim, Mýa & P!nk)", "Moulin Rouge"),
+        ("Numb/Encore", "Linkin Park x Jay-Z"),
+    ]
+    for title, artist in feat_tests:
+        result = detect_feat_collaboration(title, artist)
+        print(f"  '{artist} - {title}' -> feat={result['is_feat']}, "
+              f"trigger={result['trigger']}, featured={result['featured_artists']}")

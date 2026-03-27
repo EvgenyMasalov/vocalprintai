@@ -435,12 +435,16 @@ async def analyze_audio(file: UploadFile = File(...)):
 from pydantic import BaseModel
 class AnalyzeUrlRequest(BaseModel):
     url: str
+    force_feat: bool = False
 
 @app.post("/analyze_url")
 async def analyze_url(req: AnalyzeUrlRequest, background_tasks: BackgroundTasks):
     from yandex_analyzer.yandex_client import YandexMusicClient
     from yandex_analyzer.downloader import AudioDownloader
     from yandex_analyzer.converter import AudioConverter
+    from utils import parse_artist_name, detect_feat_collaboration
+    from vocal_separator import get_vocal_separator
+    from gender_classifier import VocalGenderClassifier
     
     url = req.url
     yandex_client = YandexMusicClient()
@@ -468,10 +472,23 @@ async def analyze_url(req: AnalyzeUrlRequest, background_tasks: BackgroundTasks)
             detail="Could not extract track info from the provided URL. Make sure it's a direct song/track link."
         )
 
+    # 1.5. Detect feat/collaboration trigger (auto-detect OR manual checkbox)
+    feat_info = detect_feat_collaboration(track_title, artist)
+    is_collaboration = feat_info["is_feat"] or req.force_feat
+    
+    if req.force_feat and not feat_info["is_feat"]:
+        print(f"[Main] 🎤 Force-feat mode enabled by user (no auto-detection trigger)")
+        feat_info["trigger"] = "manual_checkbox"
+    elif is_collaboration:
+        print(f"[Main] 🎤 Collaboration detected! Trigger: '{feat_info['trigger']}', "
+              f"Featured: {feat_info['featured_artists']}")
+    
     print(f"[Main] Proceeding with search and analysis for: {artist} - {track_title}")
 
     download_path = None
     wav_path = None
+    vocal_path = None
+    female_vocal_path = None
 
     def cleanup_files(*paths):
         for path in paths:
@@ -483,8 +500,6 @@ async def analyze_url(req: AnalyzeUrlRequest, background_tasks: BackgroundTasks)
 
     try:
         # 2. Search and Download
-        # Use parse_artist_name to ensure best search results (e.g. Freddie Mercury Queen)
-        from utils import parse_artist_name
         parsed = parse_artist_name(artist)
         search_artist = parsed["search_query"]
         
@@ -497,21 +512,88 @@ async def analyze_url(req: AnalyzeUrlRequest, background_tasks: BackgroundTasks)
         if not wav_path:
             raise HTTPException(status_code=500, detail="Failed to convert audio to WAV")
 
-        # 4. Analyze with Librosa
-        metrics = process_audio(wav_path)
-        
-        # Schedule cleanup
-        background_tasks.add_task(cleanup_files, download_path, wav_path)
+        # 4. Vocal Separation Pipeline (только при обнаружении feat)
+        vocal_separation_used = False
+        analyzed_vocal = "mixed"  # По умолчанию — анализируем весь трек
+        gender_stats = None
+        analysis_path = wav_path  # Путь к файлу для анализа (может измениться)
 
-        return {
+        if is_collaboration:
+            print(f"[Main] 🔬 Starting vocal separation pipeline...")
+            
+            try:
+                # 4a. Demucs: разделяем вокал от инструментов
+                import asyncio
+                loop = asyncio.get_event_loop()
+                separator = get_vocal_separator()
+                vocal_path = await loop.run_in_executor(None, separator.separate_vocals, wav_path)
+                
+                if vocal_path:
+                    print(f"[Main] ✅ Vocal stem extracted: {vocal_path}")
+                    vocal_separation_used = True
+                    
+                    # 4b. Классификация по полу через F0
+                    classifier = VocalGenderClassifier()
+                    gender_stats = await loop.run_in_executor(
+                        None, classifier.get_gender_stats, vocal_path
+                    )
+                    print(f"[Main] 📊 Gender stats: {gender_stats}")
+                    
+                    # 4c. Извлекаем женский вокал
+                    female_vocal_path = await loop.run_in_executor(
+                        None, classifier.extract_female_vocal, vocal_path
+                    )
+                    
+                    if female_vocal_path:
+                        analysis_path = female_vocal_path
+                        analyzed_vocal = "female"
+                        print(f"[Main] ✅ Female vocal extracted for analysis: {female_vocal_path}")
+                    else:
+                        # Если женский вокал не найден — анализируем весь вокальный стем
+                        analysis_path = vocal_path
+                        analyzed_vocal = "vocal_stem"
+                        print(f"[Main] ⚠️ No female segments found, analyzing full vocal stem")
+                else:
+                    print(f"[Main] ⚠️ Vocal separation failed, analyzing full mix")
+                    
+            except Exception as sep_error:
+                print(f"[Main] ⚠️ Vocal separation error: {sep_error}, falling back to full mix")
+                # При ошибке разделения — анализируем полный микс как раньше
+
+        # 5. Analyze with Librosa
+        metrics = process_audio(analysis_path)
+        
+        # Schedule cleanup of all temporary files
+        background_tasks.add_task(
+            cleanup_files, download_path, wav_path, vocal_path, female_vocal_path
+        )
+
+        # 6. Build response
+        response = {
             "status": "success",
             "artist": artist,
             "track": track_title,
-            "metrics": metrics
+            "metrics": metrics,
+            # Новые поля для feat-треков
+            "collaboration": {
+                "is_collaboration": is_collaboration,
+                "vocal_separation_used": vocal_separation_used,
+                "analyzed_vocal": analyzed_vocal,
+                "primary_artist": feat_info.get("primary_artist"),
+                "featured_artists": feat_info.get("featured_artists", []),
+                "clean_title": feat_info.get("clean_title", track_title),
+                "trigger": feat_info.get("trigger"),
+            }
         }
+        
+        # Добавляем статистику по полу, если разделение было выполнено
+        if gender_stats:
+            response["collaboration"]["gender_stats"] = gender_stats
+
+        return response
 
     except Exception as e:
-        cleanup_files(download_path, wav_path)
+        cleanup_files(download_path, wav_path, vocal_path, female_vocal_path)
         if isinstance(e, HTTPException):
             raise e
         raise HTTPException(status_code=500, detail=str(e))
@@ -569,7 +651,7 @@ async def get_last_generations():
             continue
     return generations
 
-@app.delete("/admin/users/zero-balance")
+@app.delete("/admin/users/delete-zero-balance")
 async def delete_zero_balance_users(db: AsyncSession = Depends(get_db)):
     try:
         print(f"DEBUG: delete_zero_balance_users called")

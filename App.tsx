@@ -22,6 +22,7 @@ const App: React.FC = () => {
   const [referenceUrl, setReferenceUrl] = useState('');
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [isDeepResearchActive, setIsDeepResearchActive] = useState(false);
+  const [isFeatMode, setIsFeatMode] = useState(false);
 
   // Auth state
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -68,7 +69,8 @@ const App: React.FC = () => {
         songStructure,
         referenceUrl,
         audioFile || undefined,
-        isDeepResearchActive
+        isDeepResearchActive,
+        isFeatMode
       );
       console.log("Analysis Result Received:", result);
       gemini.saveToArchive(result);
@@ -187,6 +189,32 @@ const App: React.FC = () => {
                   placeholder="Freddie Mercury"
                   className="w-full bg-black/50 border border-pink-500/20 p-4 text-white focus:outline-none focus:border-pink-500 transition-colors font-serif italic"
                 />
+                {/* Feat checkbox — принудительное разделение вокала */}
+                <label className="flex items-center gap-3 cursor-pointer group mt-3">
+                  <div className="relative">
+                    <input
+                      type="checkbox"
+                      checked={isFeatMode}
+                      onChange={(e) => setIsFeatMode(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-5 h-5 border border-pink-500/30 bg-black/50 peer-checked:bg-pink-500 peer-checked:border-pink-500 transition-all flex items-center justify-center">
+                      {isFeatMode && (
+                        <svg className="w-3 h-3 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-pink-500/80 group-hover:text-pink-500 transition-colors">
+                      feat — разделение вокала
+                    </span>
+                    <span className="text-[9px] text-pink-500/40 italic font-serif">
+                      Demucs + F0 классификация: выделить женский вокал
+                    </span>
+                  </div>
+                </label>
               </div>
             </div>
 

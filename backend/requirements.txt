@@ -7,7 +7,7 @@ yt-dlp
 pydantic
 sqlalchemy
 aiosqlite
-passlib[bcrypt]
+bcrypt
 python-jose[cryptography]
 python-dotenv
 email-validator
@@ -21,3 +21,8 @@ python-docx
 pandas
 requests
 openpyxl
+# Vocal separation & gender classification
+demucs
+soundfile
+torch
+torchaudio

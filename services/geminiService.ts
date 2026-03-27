@@ -115,7 +115,8 @@ export class GeminiService {
     songStructure?: string,
     referenceUrl?: string,
     audioFile?: File,
-    isDeepResearchEnabled: boolean = false
+    isDeepResearchEnabled: boolean = false,
+    isFeatMode: boolean = false
   ): Promise<VocalAnalysis> {
     const isCoreOnly = !referenceUrl && !audioFile && !songStructure;
 
@@ -293,7 +294,7 @@ export class GeminiService {
                   const librosaResponse = await fetch('/api/analyze_url', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url: referenceUrl })
+                    body: JSON.stringify({ url: referenceUrl, force_feat: isFeatMode })
                   });
 
                   if (librosaResponse.ok) {
@@ -321,6 +322,9 @@ export class GeminiService {
                 try {
                   const formData = new FormData();
                   formData.append('file', audioFile);
+                  if (isFeatMode) {
+                    formData.append('force_feat', 'true');
+                  }
 
                   const startTime = Date.now();
                   const librosaResponse = await fetch('/api/analyze', {

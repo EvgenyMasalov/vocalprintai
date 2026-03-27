@@ -84,6 +84,27 @@ export interface VocalAnalysis {
   }>;
   tempo?: number;
   key?: string;
+  // Vocal separation & gender classification (feat-треки)
+  collaboration?: {
+    is_collaboration: boolean;
+    vocal_separation_used: boolean;
+    analyzed_vocal: 'female' | 'male' | 'mixed' | 'vocal_stem';
+    primary_artist: string | null;
+    featured_artists: string[];
+    clean_title: string;
+    trigger: string | null;
+    gender_stats?: {
+      total_segments: number;
+      female_segments: number;
+      male_segments: number;
+      unknown_segments: number;
+      female_duration_sec: number;
+      male_duration_sec: number;
+      dominant_gender: 'female' | 'male' | 'mixed';
+      avg_female_f0: number;
+      avg_male_f0: number;
+    };
+  };
 }
 
 export interface AnalysisState {
