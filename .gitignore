@@ -13,11 +13,13 @@ dist-ssr
 # Environment variables
 .env
 .env.local
+backend/client_secret.json
 
 # Results and Data
 backend/results/
 backend/__pycache__/
 *.pyc
+*.bak
 
 # Virtual Environments
 venv/

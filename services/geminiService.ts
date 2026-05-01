@@ -182,8 +182,8 @@ export class GeminiService {
               "compressed": 0-100 
             } 
           },
-          "tempo": 0.0,
-          "key": "C Major"
+                  "tempo": null,
+                  "key": null
         }
 
         РЕЖИМ [SPECTRAL ANALYSIS]: (Есть Файл/URL/Текст).
@@ -239,20 +239,10 @@ export class GeminiService {
           const researchContent = researchData.choices?.[0]?.message?.content;
 
           if (researchContent) {
-            onProgress?.("Сохранение данных Deep Research в RAG...");
-            const tempRes = await fetch('/api/knowledge/temp', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ content: researchContent })
-            });
-
-            if (tempRes.ok) {
-              const tempData = await tempRes.json();
-              tempResearchFilename = tempData.filename;
-              // Instruct OpenAI about the specific file
-              messages[0].content += `\n\n[DEEP RESEARCH ACTIVE] ПРЯМО СЕЙЧАС ИСПОЛЬЗУЙ инструмент \`read_file\` с аргументом {"filename": "${tempResearchFilename}"}, чтобы получить эксклюзивные данные поиска в интернете для секций TIMBRAL PROFILE и VOCAL FX.`;
-              console.info(`[Deep Research] Saved temp file: ${tempResearchFilename}`);
-            }
+            onProgress?.("Интеграция данных Deep Research...");
+            // Non-file RAG implementation (Bypasses backend save requirement)
+            messages[0].content += `\n\n[DEEP RESEARCH DATA FOUND]:\n${researchContent}\n\nОБЯЗАТЕЛЬНО ИСПОЛЬЗУЙ эти данные для формирования секций TIMBRAL PROFILE и VOCAL FX. Это эксклюзивная информация из интернета для артиста '${artist}'.`;
+            console.info(`[Deep Research] Integrated content directly into context.`);
           }
         } else {
           console.warn("[Deep Research] Tongyi API call failed:", await researchRes.text());
@@ -261,6 +251,9 @@ export class GeminiService {
         console.warn("[Deep Research] Process failed, continuing with normal analysis.", e);
       }
     }
+
+    // Store real Librosa metrics to bypass GPT for tempo/key
+    let realLibrosaMetrics: { tempo?: number; key?: string } | null = null;
 
     if (isCoreOnly && !isDeepResearchEnabled) {
       responseData = await this.callOpenAI(messages, false);
@@ -300,6 +293,14 @@ export class GeminiService {
                   if (librosaResponse.ok) {
                     const spectralData = await librosaResponse.json();
                     console.info(`[Real Librosa] URL Success:`, spectralData);
+                    // Capture real Librosa tempo/key directly (bypass GPT)
+                    if (spectralData.metrics) {
+                      realLibrosaMetrics = {
+                        tempo: spectralData.metrics.tempo,
+                        key: spectralData.metrics.key
+                      };
+                      console.info(`[Real Librosa] Captured tempo=${realLibrosaMetrics.tempo}, key=${realLibrosaMetrics.key}`);
+                    }
                     result = { 
                       content: `REAL LIBROSA DATA (from URL: ${referenceUrl}) for ${spectralData.artist} - ${spectralData.track}: ` + JSON.stringify(spectralData.metrics) 
                     };
@@ -335,6 +336,14 @@ export class GeminiService {
                   if (librosaResponse.ok) {
                     const spectralData = await librosaResponse.json();
                     console.info(`[Real Librosa] Success in ${Date.now() - startTime}ms:`, spectralData);
+                    // Capture real Librosa tempo/key directly (bypass GPT)
+                    if (spectralData.metrics) {
+                      realLibrosaMetrics = {
+                        tempo: spectralData.metrics.tempo,
+                        key: spectralData.metrics.key
+                      };
+                      console.info(`[Real Librosa] Captured tempo=${realLibrosaMetrics.tempo}, key=${realLibrosaMetrics.key}`);
+                    }
                     result = { content: `REAL LIBROSA DATA for ${artist}: ` + JSON.stringify(spectralData.metrics) };
                   } else {
                     const errorText = await librosaResponse.text();
@@ -395,6 +404,8 @@ export class GeminiService {
                 ВАЖНО: Внутри экспертного заключения (expertVerdict) НЕ используй другие заголовки, кроме этих четырех. Используй только обычный текст и жирный шрифт для акцентов.
                 Текст должен быть МИНИМУМ 300 СЛОВ.
                 
+                ВАЖНО ДЛЯ TEMPO И KEY: Если Librosa вернул конкретные значения tempo и key в спектральных данных, ИСПОЛЬЗУЙ ИМЕННО ИХ. Не выдумывай и не подставляй дефолтные значения. Если данных нет — поставь null.
+                
                 ОТВЕТЬ СТРОГО В ЭТОМ ФОРМАТЕ (JSON):
                 {
                   "artistName": "${artist}",
@@ -403,8 +414,8 @@ export class GeminiService {
                   "expertVerdict": "### TIMBRAL PROFILE\\n[long technical text]\\n\\n### TECHNICAL DIAGNOSTICS\\n[long technical text]\\n\\n### SEMANTIC TIMELINE\\n[long technical text]",
                   "technicalDiagnostics": { ... },
                   "timbre": { ... },
-                  "tempo": 0.0,
-                  "key": "note"
+                  "tempo": <number from Librosa or null>,
+                  "key": "<key from Librosa or null>"
                 }
                 
                 ВЕСЬ ТЕКСТ НА АНГЛИЙСКОМ.`
@@ -506,6 +517,22 @@ export class GeminiService {
         }
       }
 
+      // Determine final tempo/key: REAL Librosa data takes priority over GPT output
+      let finalTempo = parsed.tempo;
+      let finalKey = parsed.key;
+      
+      if (realLibrosaMetrics) {
+        // Always prefer real Librosa data over GPT's interpretation
+        if (realLibrosaMetrics.tempo != null && realLibrosaMetrics.tempo > 0) {
+          finalTempo = realLibrosaMetrics.tempo;
+          console.info(`[Tempo/Key Override] Using real Librosa tempo: ${finalTempo} (GPT had: ${parsed.tempo})`);
+        }
+        if (realLibrosaMetrics.key) {
+          finalKey = realLibrosaMetrics.key;
+          console.info(`[Tempo/Key Override] Using real Librosa key: ${finalKey} (GPT had: ${parsed.key})`);
+        }
+      }
+
       const finalParsed: VocalAnalysis = {
         ...parsed,
         artistName: parsed.artistName || artist,
@@ -514,8 +541,8 @@ export class GeminiService {
         expertVerdict: expertVerdict,
         techniques: Array.isArray(parsed.techniques) ? parsed.techniques : [],
         vocalSemanticMapping: Array.isArray(parsed.vocalSemanticMapping) ? parsed.vocalSemanticMapping : [],
-        tempo: parsed.tempo,
-        key: parsed.key
+        tempo: finalTempo,
+        key: finalKey
       };
 
       // Surgical fallback for radar metrics

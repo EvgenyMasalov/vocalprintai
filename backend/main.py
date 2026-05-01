@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, status, BackgroundTasks, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, status, BackgroundTasks, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -184,15 +184,14 @@ async def read_knowledge_file(filename: str):
         
         content = b""
         if is_stub:
-            # Fetch from n8n
-            read_webhook_url = "http://localhost:5678/webhook/rag-read"
+            # Fetch directly from Google Drive (n8n removed)
             try:
-                response = requests.post(read_webhook_url, json={"filename": safe_filename}, timeout=30)
-                response.raise_for_status()
-                content = response.content
+                from google_drive import download_file as gdrive_download
+                content = gdrive_download(safe_filename)
+                if content is None:
+                    return {"filename": safe_filename, "content": f"[Error: File '{safe_filename}' not found in Google Drive RAG folder]"}
             except Exception as e:
-                print(f"Error fetching from n8n: {e}")
-                # Fallback to local if possible, but it's a stub, so just report error
+                print(f"Error fetching from Google Drive: {e}")
                 return {"filename": safe_filename, "content": f"[Error: Could not fetch content from Google Drive: {str(e)}]"}
         else:
             with open(content_path, "rb") as f:
@@ -392,10 +391,96 @@ def process_audio(file_path: str):
         "duration": float(librosa.get_duration(y=y, sr=sr))
     }
 
+async def run_analysis_pipeline(
+    wav_path: str,
+    artist: str,
+    track_title: str,
+    is_collaboration: bool,
+    feat_info: dict,
+    background_tasks: BackgroundTasks,
+    temp_files: list = None
+):
+    """Unified pipeline for vocal separation and spectral analysis."""
+    from vocal_separator import get_vocal_separator
+    from gender_classifier import VocalGenderClassifier
+    import asyncio
+
+    vocal_path = None
+    female_vocal_path = None
+    vocal_separation_used = False
+    analyzed_vocal = "mixed"
+    gender_stats = None
+    analysis_path = wav_path
+
+    if is_collaboration:
+        print(f"[Main] 🔬 Starting vocal separation pipeline for: {artist} - {track_title}")
+        try:
+            loop = asyncio.get_event_loop()
+            separator = get_vocal_separator()
+            vocal_path = await loop.run_in_executor(None, separator.separate_vocals, wav_path)
+            
+            if vocal_path:
+                print(f"[Main] ✅ Vocal stem extracted: {vocal_path}")
+                vocal_separation_used = True
+                
+                classifier = VocalGenderClassifier()
+                gender_stats = await loop.run_in_executor(None, classifier.get_gender_stats, vocal_path)
+                female_vocal_path = await loop.run_in_executor(None, classifier.extract_female_vocal, vocal_path)
+                
+                if female_vocal_path:
+                    analysis_path = female_vocal_path
+                    analyzed_vocal = "female"
+                else:
+                    analysis_path = vocal_path
+                    analyzed_vocal = "vocal_stem"
+            else:
+                print(f"[Main] ⚠️ Vocal separation failed, analyzing full mix")
+        except Exception as sep_error:
+            print(f"[Main] ⚠️ Vocal separation error: {sep_error}, falling back to full mix")
+
+    # Core Analysis
+    metrics = process_audio(analysis_path)
+
+    # Cleanup
+    all_temp = (temp_files or []) + [vocal_path, female_vocal_path]
+    def cleanup_files(*paths):
+        for path in paths:
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except Exception as e:
+                    print(f"Error cleaning up {path}: {e}")
+    
+    background_tasks.add_task(cleanup_files, *all_temp)
+
+    return {
+        "status": "success",
+        "artist": artist,
+        "track": track_title,
+        "metrics": metrics,
+        "collaboration": {
+            "is_collaboration": is_collaboration,
+            "vocal_separation_used": vocal_separation_used,
+            "analyzed_vocal": analyzed_vocal,
+            "primary_artist": feat_info.get("primary_artist"),
+            "featured_artists": feat_info.get("featured_artists", []),
+            "clean_title": feat_info.get("clean_title", track_title),
+            "trigger": feat_info.get("trigger"),
+            "gender_stats": gender_stats
+        }
+    }
+
 @app.post("/analyze")
-async def analyze_audio(file: UploadFile = File(...)):
+async def analyze_audio(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    force_feat: bool = Form(False)
+):
+    from utils import detect_feat_collaboration
     try:
-        # Check if file is empty
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No filename provided")
+            
         file.file.seek(0, os.SEEK_END)
         size = file.file.tell()
         file.file.seek(0)
@@ -407,30 +492,26 @@ async def analyze_audio(file: UploadFile = File(...)):
             shutil.copyfileobj(file.file, tmp)
             tmp_path = tmp.name
 
-        # Ensure file is closed before librosa loads it
-        metrics = process_audio(tmp_path)
+        # For uploaded files, we try to guess artist/track from filename if possible
+        # but the frontend usually provides them separately or we use defaults
+        artist = file.filename.split('-')[0].strip() if '-' in file.filename else "Unknown"
+        track = file.filename.split('-')[1].split('.')[0].strip() if '-' in file.filename else file.filename
         
-        return {
-            "status": "success",
-            "filename": file.filename,
-            "metrics": metrics
-        }
+        feat_info = detect_feat_collaboration(track, artist)
+        is_collaboration = feat_info["is_feat"] or force_feat
+
+        return await run_analysis_pipeline(
+            wav_path=tmp_path,
+            artist=artist,
+            track_title=track,
+            is_collaboration=is_collaboration,
+            feat_info=feat_info,
+            background_tasks=background_tasks,
+            temp_files=[tmp_path]
+        )
     except Exception as e:
-        if isinstance(e, HTTPException):
-            raise e
+        if isinstance(e, HTTPException): raise e
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if 'tmp_path' in locals() and os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except PermissionError:
-                # On Windows, sometimes file descriptors are held longer than expected
-                import time
-                try:
-                    time.sleep(0.1)
-                    os.remove(tmp_path)
-                except:
-                    pass
 
 from pydantic import BaseModel
 class AnalyzeUrlRequest(BaseModel):
@@ -443,159 +524,53 @@ async def analyze_url(req: AnalyzeUrlRequest, background_tasks: BackgroundTasks)
     from yandex_analyzer.downloader import AudioDownloader
     from yandex_analyzer.converter import AudioConverter
     from utils import parse_artist_name, detect_feat_collaboration
-    from vocal_separator import get_vocal_separator
-    from gender_classifier import VocalGenderClassifier
     
     url = req.url
     yandex_client = YandexMusicClient()
     downloader = AudioDownloader()
     converter = AudioConverter(ffmpeg_path=r"C:\ffmpeg-8.1-full_build\bin\ffmpeg.exe")
     
-    # 1. Parse Music Link
     artist, track_title = None, None
-    
-    # Try Yandex client first if it's a Yandex URL
     if "music.yandex" in url:
         artist, track_title = yandex_client.parse_url(url)
     
-    # Fallback to Universal Parser (which now includes YT-DLP) if Yandex failed or it's a different service
     if not artist or not track_title:
         if MUSIC_PARSER_AVAILABLE:
             parser = MusicMetadataParser()
             artist, track_title = parser.get_metadata(url)
-            if artist and track_title:
-                print(f"[Main] Extracted metadata via Universal Parser: {artist} - {track_title}")
-    
-    if not (artist and track_title):
-        raise HTTPException(
-            status_code=400, 
-            detail="Could not extract track info from the provided URL. Make sure it's a direct song/track link."
-        )
 
-    # 1.5. Detect feat/collaboration trigger (auto-detect OR manual checkbox)
+    if not (artist and track_title):
+        raise HTTPException(status_code=400, detail="Could not extract track info from URL")
+
     feat_info = detect_feat_collaboration(track_title, artist)
     is_collaboration = feat_info["is_feat"] or req.force_feat
     
-    if req.force_feat and not feat_info["is_feat"]:
-        print(f"[Main] 🎤 Force-feat mode enabled by user (no auto-detection trigger)")
-        feat_info["trigger"] = "manual_checkbox"
-    elif is_collaboration:
-        print(f"[Main] 🎤 Collaboration detected! Trigger: '{feat_info['trigger']}', "
-              f"Featured: {feat_info['featured_artists']}")
-    
-    print(f"[Main] Proceeding with search and analysis for: {artist} - {track_title}")
-
     download_path = None
     wav_path = None
-    vocal_path = None
-    female_vocal_path = None
-
-    def cleanup_files(*paths):
-        for path in paths:
-            if path and os.path.exists(path):
-                try:
-                    os.remove(path)
-                except Exception as e:
-                    print(f"Error cleaning up {path}: {e}")
 
     try:
-        # 2. Search and Download
         parsed = parse_artist_name(artist)
-        search_artist = parsed["search_query"]
-        
-        download_path = downloader.download_by_search(search_artist, track_title)
+        download_path = downloader.download_by_search(parsed["search_query"], track_title)
         if not download_path:
-            raise HTTPException(status_code=404, detail="Failed to download audio from alternative sources")
+            raise HTTPException(status_code=404, detail="Failed to download audio")
 
-        # 3. Convert to WAV
         wav_path = converter.convert_to_wav(download_path)
         if not wav_path:
-            raise HTTPException(status_code=500, detail="Failed to convert audio to WAV")
+            raise HTTPException(status_code=500, detail="Failed to convert audio")
 
-        # 4. Vocal Separation Pipeline (только при обнаружении feat)
-        vocal_separation_used = False
-        analyzed_vocal = "mixed"  # По умолчанию — анализируем весь трек
-        gender_stats = None
-        analysis_path = wav_path  # Путь к файлу для анализа (может измениться)
-
-        if is_collaboration:
-            print(f"[Main] 🔬 Starting vocal separation pipeline...")
-            
-            try:
-                # 4a. Demucs: разделяем вокал от инструментов
-                import asyncio
-                loop = asyncio.get_event_loop()
-                separator = get_vocal_separator()
-                vocal_path = await loop.run_in_executor(None, separator.separate_vocals, wav_path)
-                
-                if vocal_path:
-                    print(f"[Main] ✅ Vocal stem extracted: {vocal_path}")
-                    vocal_separation_used = True
-                    
-                    # 4b. Классификация по полу через F0
-                    classifier = VocalGenderClassifier()
-                    gender_stats = await loop.run_in_executor(
-                        None, classifier.get_gender_stats, vocal_path
-                    )
-                    print(f"[Main] 📊 Gender stats: {gender_stats}")
-                    
-                    # 4c. Извлекаем женский вокал
-                    female_vocal_path = await loop.run_in_executor(
-                        None, classifier.extract_female_vocal, vocal_path
-                    )
-                    
-                    if female_vocal_path:
-                        analysis_path = female_vocal_path
-                        analyzed_vocal = "female"
-                        print(f"[Main] ✅ Female vocal extracted for analysis: {female_vocal_path}")
-                    else:
-                        # Если женский вокал не найден — анализируем весь вокальный стем
-                        analysis_path = vocal_path
-                        analyzed_vocal = "vocal_stem"
-                        print(f"[Main] ⚠️ No female segments found, analyzing full vocal stem")
-                else:
-                    print(f"[Main] ⚠️ Vocal separation failed, analyzing full mix")
-                    
-            except Exception as sep_error:
-                print(f"[Main] ⚠️ Vocal separation error: {sep_error}, falling back to full mix")
-                # При ошибке разделения — анализируем полный микс как раньше
-
-        # 5. Analyze with Librosa
-        metrics = process_audio(analysis_path)
-        
-        # Schedule cleanup of all temporary files
-        background_tasks.add_task(
-            cleanup_files, download_path, wav_path, vocal_path, female_vocal_path
+        return await run_analysis_pipeline(
+            wav_path=wav_path,
+            artist=artist,
+            track_title=track_title,
+            is_collaboration=is_collaboration,
+            feat_info=feat_info,
+            background_tasks=background_tasks,
+            temp_files=[download_path, wav_path]
         )
-
-        # 6. Build response
-        response = {
-            "status": "success",
-            "artist": artist,
-            "track": track_title,
-            "metrics": metrics,
-            # Новые поля для feat-треков
-            "collaboration": {
-                "is_collaboration": is_collaboration,
-                "vocal_separation_used": vocal_separation_used,
-                "analyzed_vocal": analyzed_vocal,
-                "primary_artist": feat_info.get("primary_artist"),
-                "featured_artists": feat_info.get("featured_artists", []),
-                "clean_title": feat_info.get("clean_title", track_title),
-                "trigger": feat_info.get("trigger"),
-            }
-        }
-        
-        # Добавляем статистику по полу, если разделение было выполнено
-        if gender_stats:
-            response["collaboration"]["gender_stats"] = gender_stats
-
-        return response
-
     except Exception as e:
-        cleanup_files(download_path, wav_path, vocal_path, female_vocal_path)
-        if isinstance(e, HTTPException):
-            raise e
+        if download_path and os.path.exists(download_path): os.remove(download_path)
+        if wav_path and os.path.exists(wav_path): os.remove(wav_path)
+        if isinstance(e, HTTPException): raise e
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/admin/clients", response_model=list[UserResponse])
@@ -711,27 +686,53 @@ async def delete_user(user_id: int, db: AsyncSession = Depends(get_db)):
         
 # @app.delete("/admin/users/{user_id}")
 
+@app.get("/admin/gdrive/status")
+async def get_gdrive_status():
+    """Check if Google Drive OAuth token is valid (no browser needed if token exists)."""
+    try:
+        from google_drive import is_authenticated, RAG_FOLDER_NAME
+        authenticated = is_authenticated()
+        return {"authenticated": authenticated, "folder": RAG_FOLDER_NAME}
+    except Exception as e:
+        return {"authenticated": False, "error": str(e)}
+
 @app.get("/admin/rag/files")
 async def get_rag_files():
+    """List RAG files from Google Drive + any non-stub local files."""
     try:
-        knowledge_dir = os.path.join(os.path.dirname(__file__), 'knowledge')
-        if not os.path.exists(knowledge_dir):
-            return []
-        
-        files = []
-        for f in os.listdir(knowledge_dir):
-            file_path = os.path.join(knowledge_dir, f)
-            if os.path.isfile(file_path):
-                stats = os.stat(file_path)
-                files.append({
-                    "filename": f,
-                    "size": stats.st_size,
-                    "last_modified": stats.st_mtime
+        gdrive_files = []
+        try:
+            import asyncio
+            from google_drive import list_files as gdrive_list
+            loop = asyncio.get_event_loop()
+            drive_items = await loop.run_in_executor(None, gdrive_list)
+            for item in drive_items:
+                gdrive_files.append({
+                    "filename": item["name"],
+                    "size": int(item.get("size", 0)),
+                    "last_modified": item.get("modifiedTime", ""),
+                    "source": "gdrive"
                 })
-        
-        # Sort by last modified
-        files.sort(key=lambda x: x['last_modified'], reverse=True)
-        return files
+        except Exception as e:
+            print(f"[GDrive] list_files error: {e}")
+
+        # Also include any locally non-stub files not already on Drive
+        knowledge_dir = os.path.join(os.path.dirname(__file__), 'knowledge')
+        local_files = []
+        if os.path.exists(knowledge_dir):
+            for f in os.listdir(knowledge_dir):
+                file_path = os.path.join(knowledge_dir, f)
+                if os.path.isfile(file_path) and os.path.getsize(file_path) > 0:
+                    if not any(g["filename"] == f for g in gdrive_files):
+                        stats = os.stat(file_path)
+                        local_files.append({
+                            "filename": f,
+                            "size": stats.st_size,
+                            "last_modified": stats.st_mtime,
+                            "source": "local"
+                        })
+
+        return gdrive_files + local_files
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -743,54 +744,43 @@ async def upload_rag_file(file: UploadFile = File(...)):
         if ext not in ALLOWED_RAG_EXTENSIONS:
             allowed_str = ", ".join(ALLOWED_RAG_EXTENSIONS)
             raise HTTPException(status_code=400, detail=f"Unsupported file type. Allowed: {allowed_str}")
-        
+
         # 2. Check size
         file.file.seek(0, os.SEEK_END)
         size = file.file.tell()
         file.file.seek(0)
-        
+
         if size > MAX_RAG_FILE_SIZE:
             raise HTTPException(status_code=400, detail="File too large. Max 100MB.")
         if size == 0:
             raise HTTPException(status_code=400, detail="File is empty.")
 
         content = await file.read()
-        
-        # 3. Send to n8n Webhook
-        # Using the production endpoint so the user doesn't have to manually click "Listen for test event" each time.
-        # The user just needs to ensure the Workflow is turned "Active" in n8n.
-        webhook_url = "http://localhost:5678/webhook/341a3523-f39e-49a4-b552-6b58fe9f0c49"
-        
+
+        # 3. Upload directly to Google Drive (n8n removed)
         try:
             import asyncio
+            from google_drive import upload_file as gdrive_upload
             loop = asyncio.get_event_loop()
-            
-            def send_webhook():
-                response = requests.post(
-                    webhook_url,
-                    files={"file": (file.filename, content, file.content_type)},
-                    timeout=300
-                )
-                response.raise_for_status()
-                return response
-                
-            await loop.run_in_executor(None, send_webhook)
-            
-        except requests.exceptions.RequestException as req_err:
-            print(f"Error forwarding to n8n webhook: {req_err}")
-            raise HTTPException(status_code=502, detail=f"Failed to upload file to n8n: {req_err}")
+            mimetype = file.content_type or "application/octet-stream"
+            file_id = await loop.run_in_executor(
+                None, lambda: gdrive_upload(file.filename, content, mimetype)
+            )
+            print(f"[GDrive] Uploaded '{file.filename}' → file_id={file_id}")
+        except Exception as gdrive_err:
+            print(f"Error uploading to Google Drive: {gdrive_err}")
+            raise HTTPException(status_code=502, detail=f"Failed to upload file to Google Drive: {gdrive_err}")
 
         # 4. Save a stub file locally so it shows in the Admin RAG List without taking up space
         knowledge_dir = os.path.join(os.path.dirname(__file__), 'knowledge')
         if not os.path.exists(knowledge_dir):
             os.makedirs(knowledge_dir)
-            
+
         file_path = os.path.join(knowledge_dir, file.filename)
-        # Create an empty file with the identical name
         with open(file_path, "wb") as f:
-            f.write(b"") # Empty stub
-            
-        return {"status": "success", "filename": file.filename, "size": size}
+            f.write(b"")  # Empty stub — actual content lives on Google Drive
+
+        return {"status": "success", "filename": file.filename, "size": size, "file_id": file_id}
     except HTTPException as e:
         raise e
     except Exception as e:

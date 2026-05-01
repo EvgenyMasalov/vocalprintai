@@ -53,35 +53,46 @@ def parse_artist_name(name_str: str) -> Dict[str, Optional[str]]:
 def estimate_key(y, sr):
     """
     Estimates the musical key using Krumhansl-Schmuckler correlation.
-    Uses HPSS to isolate harmonic content and CQT for chromagram.
+    Uses HPSS to isolate harmonic content and multiple chromagram strategies.
     Attempts PostgreSQL pgvector search if available, otherwise falls back to manual.
+    Returns key name with confidence indicator.
     """
     import numpy as np
     import librosa
     import os
-    import psycopg2
-    from pgvector.psycopg2 import register_vector
 
-    # 1. HPSS & Chromagram
+    # 1. HPSS & Chromagram — use multiple strategies for robustness
     y_harmonic = librosa.effects.harmonic(y)
-    chromagram = librosa.feature.chroma_cqt(y=y_harmonic, sr=sr)
-    chroma_vals = np.sum(chromagram, axis=1)
     
-    # Normalize chroma vector
-    if np.max(chroma_vals) > 0:
-        chroma_vals = chroma_vals / np.max(chroma_vals)
+    # Strategy A: chroma_cqt (best for polyphonic music)
+    chromagram_cqt = librosa.feature.chroma_cqt(y=y_harmonic, sr=sr, hop_length=2048)
+    chroma_cqt = np.mean(chromagram_cqt, axis=1)
+    
+    # Strategy B: chroma_cens (more robust for noisy/vocal audio)
+    chromagram_cens = librosa.feature.chroma_cens(y=y_harmonic, sr=sr, hop_length=2048)
+    chroma_cens = np.mean(chromagram_cens, axis=1)
+    
+    # Weighted blend: 60% CQT + 40% CENS (CENS is more noise-resistant)
+    chroma_vals = 0.6 * chroma_cqt + 0.4 * chroma_cens
+    
+    # Normalize using L2 norm (better for correlation than max-norm)
+    norm = np.linalg.norm(chroma_vals)
+    if norm > 0:
+        chroma_vals = chroma_vals / norm
 
     # 2. Try PostgreSQL pgvector search
     db_url = os.getenv("DATABASE_URL")
     if db_url and "postgresql" in db_url:
         try:
+            import psycopg2
+            from pgvector.psycopg2 import register_vector
             conn = psycopg2.connect(db_url)
             register_vector(conn)
             cur = conn.cursor()
             
             # Use cosine distance (<=>) to find the closest match
             cur.execute(
-                "SELECT key_name FROM key_profiles ORDER BY profile_vector <=> %s LIMIT 1",
+                "SELECT key_name FROM key_profiles ORDER BY profile_vector <=> %s::vector LIMIT 1",
                 (chroma_vals.tolist(),)
             )
             res = cur.fetchone()
@@ -92,29 +103,50 @@ def estimate_key(y, sr):
         except Exception as e:
             print(f"[KeyDetection] DB search failed, falling back to manual: {e}")
 
-    # 3. Manual Fallback: Krumhansl-Schmuckler Profiles (C Major / C Minor)
+    # 3. Manual Fallback: Krumhansl-Schmuckler Key Profiles
+    # Reference profiles for C Major and C Minor (Krumhansl & Kessler, 1982)
     major_profile = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
     minor_profile = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
     
-    # Normalize profiles too for fair correlation
-    major_profile = major_profile / np.max(major_profile)
-    minor_profile = minor_profile / np.max(minor_profile)
+    key_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
     
     major_corrs = []
     minor_corrs = []
     
     for i in range(12):
-        major_corrs.append(np.corrcoef(major_profile, np.roll(chroma_vals, -i))[0, 1])
-        minor_corrs.append(np.corrcoef(minor_profile, np.roll(chroma_vals, -i))[0, 1])
+        # Roll the PROFILE to match each key (roll right = transpose up)
+        # For key i, the profile of that key is the C profile shifted by i semitones
+        shifted_major = np.roll(major_profile, i)
+        shifted_minor = np.roll(minor_profile, i)
         
-    best_major_idx = np.argmax(major_corrs)
-    best_minor_idx = np.argmax(minor_corrs)
+        # Use Pearson correlation (np.corrcoef handles mean-centering internally)
+        major_corrs.append(np.corrcoef(shifted_major, chroma_vals)[0, 1])
+        minor_corrs.append(np.corrcoef(shifted_minor, chroma_vals)[0, 1])
+        
+    best_major_idx = int(np.argmax(major_corrs))
+    best_minor_idx = int(np.argmax(minor_corrs))
+    best_major_corr = major_corrs[best_major_idx]
+    best_minor_corr = minor_corrs[best_minor_idx]
     
-    key_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-    if major_corrs[best_major_idx] > minor_corrs[best_minor_idx]:
-        return f"{key_names[best_major_idx]} Major"
+    # Confidence check: if the best correlation is too low, the result is unreliable
+    best_corr = max(best_major_corr, best_minor_corr)
+    
+    # Also check discrimination: difference between best and second-best
+    all_corrs = major_corrs + minor_corrs
+    sorted_corrs = sorted(all_corrs, reverse=True)
+    discrimination = sorted_corrs[0] - sorted_corrs[1] if len(sorted_corrs) > 1 else 0
+    
+    if best_corr < 0.3 or discrimination < 0.02:
+        print(f"[KeyDetection] Low confidence: best_corr={best_corr:.3f}, discrimination={discrimination:.3f}")
+        # Still return best guess but log warning
+    
+    if best_major_corr >= best_minor_corr:
+        result = f"{key_names[best_major_idx]} Major"
     else:
-        return f"{key_names[best_minor_idx]} Minor"
+        result = f"{key_names[best_minor_idx]} Minor"
+    
+    print(f"[KeyDetection] Manual result: {result} (corr={best_corr:.3f}, disc={discrimination:.3f})")
+    return result
 
 def detect_feat_collaboration(track_title: str, artist: str = "") -> Dict[str, Optional[str]]:
     """

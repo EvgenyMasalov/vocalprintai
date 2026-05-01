@@ -101,32 +101,29 @@ const FeatureStore: React.FC<FeatureStoreProps> = ({ onFeaturesChange, isAdmin =
     <div className="w-full mt-2 font-sans relative">
       <style>{`
         @keyframes shake {
-                        0%, 100% { transform: translateX(0); }
-          25% { transform: translateX(-4px) rotate(- 1deg);
-                }
-          50 % { transform: translateX(4px) rotate(1deg); }
-          75 % { transform: translateX(-4px) rotate(- 1deg);
-            }
+          0%, 100% { transform: translateX(0); }
+          25% { transform: translateX(-4px) rotate(-1deg); }
+          50% { transform: translateX(4px) rotate(1deg); }
+          75% { transform: translateX(-4px) rotate(-1deg); }
         }
-        .shake - animation {
-    animation: shake 0.4s cubic - bezier(.36, .07, .19, .97) both;
-}
-@keyframes unlock - glow {
-    0 % { box- shadow: 0 0 0 rgba(255, 255, 255, 0);
-}
-50 % { box- shadow: 0 0 20px rgba(124, 58, 237, 0.6); }
-100 % { box- shadow: 0 0 0 rgba(255, 255, 255, 0); }
+        .shake-animation {
+          animation: shake 0.4s cubic-bezier(.36, .07, .19, .97) both;
+        }
+        @keyframes unlock-glow {
+          0% { box-shadow: 0 0 0 rgba(255, 255, 255, 0); }
+          50% { box-shadow: 0 0 20px rgba(124, 58, 237, 0.6); }
+          100% { box-shadow: 0 0 0 rgba(255, 255, 255, 0); }
         }
         .unlocking {
-    animation: unlock - glow 0.8s ease - out forwards;
-}
-        .toast - enter {
-    animation: slideUp 0.3s cubic - bezier(0.16, 1, 0.3, 1) forwards;
-}
-@keyframes slideUp {
-          from { transform: translateY(100 %) translateX(-50 %); opacity: 0; }
-          to { transform: translateY(0) translateX(-50 %); opacity: 1; }
-}
+          animation: unlock-glow 0.8s ease-out forwards;
+        }
+        .toast-enter {
+          animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        @keyframes slideUp {
+          from { transform: translateY(100%) translateX(-50%); opacity: 0; }
+          to { transform: translateY(0) translateX(-50%); opacity: 1; }
+        }
 `}</style>
 
       {/* Wallet Balance Indicator */}

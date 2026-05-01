@@ -6,8 +6,8 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
   return {
     server: {
-      port: 9090,
-      host: '127.0.0.1',
+      port: 3000,
+      host: '0.0.0.0',
       proxy: {
         '/api-proxy': {
           target: 'https://api.polza.ai',

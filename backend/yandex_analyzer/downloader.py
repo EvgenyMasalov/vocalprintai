@@ -1,5 +1,8 @@
 import sys
 import os
+import tempfile
+import yt_dlp
+from typing import Optional, Any
 # Add parent dir to path to find utils
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if parent_dir not in sys.path:

@@ -22,11 +22,11 @@ if errorlevel 1 (
 )
 
 :: --- [1/5] Cleanup zombie processes ------------------------------------------
-echo [1/5] Cleaning up existing processes on ports 8500 and 9090...
+echo [1/5] Cleaning up existing processes on ports 8500 and 3000...
 
 :: kill by port
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8500 ^| findstr LISTENING') do taskkill /F /PID %%a >nul 2>&1
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr :9090 ^| findstr LISTENING') do taskkill /F /PID %%a >nul 2>&1
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr :3000 ^| findstr LISTENING') do taskkill /F /PID %%a >nul 2>&1
 
 :: kill by name (aggressive)
 taskkill /F /IM node.exe /FI "WINDOWTITLE eq VocalPrint Frontend*" >nul 2>&1
@@ -87,12 +87,12 @@ echo Waiting for Frontend (7 sec)...
 timeout /t 7 /nobreak >nul
 
 echo Opening browser...
-start "" "http://127.0.0.1:9090"
+start "" "http://127.0.0.1:3000"
 
 echo.
 echo ============================================
 echo    VocalPrint AI is running!
-echo    URL: http://127.0.0.1:9090
+echo    URL: http://127.0.0.1:3000
 echo ============================================
 pause
 exit

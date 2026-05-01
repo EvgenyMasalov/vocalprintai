@@ -30,7 +30,13 @@ def seed_key_profiles():
         
         print("Seeding Major keys...")
         for i in range(12):
+            # Roll RIGHT by i positions: shifts the C profile to represent key i
+            # e.g., i=0 → C Major, i=1 → C# Major (profile[0] becomes the weight for C#)
             profile = np.roll(major_base, i)
+            # Normalize with L2 norm for cosine similarity in pgvector
+            norm = np.linalg.norm(profile)
+            if norm > 0:
+                profile = profile / norm
             name = f"{key_names[i]} Major"
             cur.execute(
                 "INSERT INTO key_profiles (key_name, note, mode, profile_vector) VALUES (%s, %s, %s, %s) ON CONFLICT (key_name) DO UPDATE SET profile_vector = EXCLUDED.profile_vector",
@@ -40,6 +46,10 @@ def seed_key_profiles():
         print("Seeding Minor keys...")
         for i in range(12):
             profile = np.roll(minor_base, i)
+            # Normalize with L2 norm for cosine similarity in pgvector
+            norm = np.linalg.norm(profile)
+            if norm > 0:
+                profile = profile / norm
             name = f"{key_names[i]} Minor"
             cur.execute(
                 "INSERT INTO key_profiles (key_name, note, mode, profile_vector) VALUES (%s, %s, %s, %s) ON CONFLICT (key_name) DO UPDATE SET profile_vector = EXCLUDED.profile_vector",
